@@ -60,7 +60,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 const Q = new URLSearchParams(location.search);
-const KEY = Q.get('j');
+const KEY = (Q.get('j') || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 fetch('jobs/' + encodeURIComponent(KEY) + '.json').then(r => { if (!r.ok) throw 0; return r.json(); })
   .then(start).catch(() => { document.getElementById('pname').textContent = 'Job not found'; document.getElementById('pwhere').textContent = 'Rescan the label, or check the job has been uploaded.'; });
 function start(JOB){
