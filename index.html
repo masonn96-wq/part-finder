@@ -85,13 +85,18 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 <script>
 const Q = new URLSearchParams(location.search);
 const RAWJ = (Q.get('j') || '').trim();
-// Job names start with the job number (e.g. "J1093 - 62 Smith St - Kitchen"); only that number is used,
-// so addresses never end up in file names. Falls back to the whole name if there's no number.
-// job key: the J number anywhere in the job name (J1100), otherwise the whole job name
+// Each CV job has its own page, keyed by its full job name ("J1093 - 62 Florizel St - Kitchen" ->
+// j1093-62-florizel-st-kitchen), so separate CV jobs under one J number never overwrite each other.
+// Older pages were keyed by the J number only, so that is tried second.
+const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 const NUM = RAWJ.match(/(?:^|[^A-Za-z0-9])(J\d{3,})(?!\d)/i);
-const KEY = (NUM ? NUM[1] : RAWJ).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-fetch('jobs/' + encodeURIComponent(KEY) + '.json').then(r => { if (!r.ok) throw 0; return r.json(); })
-  .then(start).catch(() => { document.getElementById('pname').textContent = 'Job not found'; document.getElementById('pwhere').textContent = 'Rescan the label, or check the job has been uploaded.'; });
+const KEYS = [...new Set([slug(RAWJ), NUM ? slug(NUM[1]) : ''].filter(Boolean))];
+(async () => {
+  for (const k of KEYS){
+    try { const r = await fetch('jobs/' + encodeURIComponent(k) + '.json'); if (r.ok) return start(await r.json()); } catch (_) {}
+  }
+  document.getElementById('pname').textContent = 'Job not found'; document.getElementById('pwhere').textContent = 'Rescan the label, or check the job has been uploaded.';
+})();
 function start(JOB){
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();

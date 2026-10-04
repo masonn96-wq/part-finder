@@ -172,7 +172,7 @@ async function publish(){
 $('publish').addEventListener('click', publish);
 
 // same rule as the Part Finder page: job number at the front of the job name
-function jobKeyOf(name){ const m = name.trim().match(/(?:^|[^A-Za-z0-9])(J\d{3,})(?!\d)/i); return (m ? m[1].toUpperCase() : name.trim()); }
+function jobKeyOf(name){ return name.trim(); }   // full CV job name: each CV job gets its own page
 function fileKey(k){ return k.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
 
 // ---------- CSV ----------
