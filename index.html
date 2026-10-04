@@ -87,8 +87,9 @@ const Q = new URLSearchParams(location.search);
 const RAWJ = (Q.get('j') || '').trim();
 // Job names start with the job number (e.g. "J1093 - 62 Smith St - Kitchen"); only that number is used,
 // so addresses never end up in file names. Falls back to the whole name if there's no number.
-const NUM = RAWJ.match(/^[A-Za-z]*\d+/);
-const KEY = (NUM ? NUM[0] : RAWJ).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+// job key: the J number anywhere in the job name (J1100), otherwise the whole job name
+const NUM = RAWJ.match(/(?:^|[^A-Za-z0-9])(J\d{3,})(?!\d)/i);
+const KEY = (NUM ? NUM[1] : RAWJ).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 fetch('jobs/' + encodeURIComponent(KEY) + '.json').then(r => { if (!r.ok) throw 0; return r.json(); })
   .then(start).catch(() => { document.getElementById('pname').textContent = 'Job not found'; document.getElementById('pwhere').textContent = 'Rescan the label, or check the job has been uploaded.'; });
 function start(JOB){
