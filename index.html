@@ -122,12 +122,24 @@ const sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(1500, 3
 
 // ---- materials (v2 files carry real CV materials + textures; v1 files get plain board colour) ----
 const loader = new THREE.TextureLoader();
-const texCache = {}, texUsers = {};
+const texCache = {}, texUsers = {}, texVariants = {};
+// One GPU texture per image (plus one per different repeat). Cloning per mesh uploaded the same image
+// hundreds of times - fine on a PC, but it ran phones out of graphics memory and crashed the page.
+function textureAt(file, rx, ry){
+  const base = texture(file);
+  if (Math.abs(rx - 1) < 1e-6 && Math.abs(ry - 1) < 1e-6) return base;
+  const key = file + '|' + rx.toFixed(5) + '|' + ry.toFixed(5);
+  if (!texCache[key]){
+    const v = base.clone(); v.repeat.set(rx, ry); v.needsUpdate = true;
+    (texVariants[file] = texVariants[file] || []).push(v); texCache[key] = v;
+  }
+  return texCache[key];
+}
 function texture(file){
   if (!texCache[file]){
     texUsers[file] = [];
     const t = loader.load('textures/' + encodeURIComponent(file),
-      img => texUsers[file].forEach(m => { if (m.map){ m.map.image = t.image; m.map.needsUpdate = true; } m.needsUpdate = true; }),
+      img => { (texVariants[file] || []).forEach(v => { v.image = t.image; v.needsUpdate = true; }); texUsers[file].forEach(m => { m.needsUpdate = true; }); },
       undefined,
       () => texUsers[file].forEach(m => { m.map = null; m.color.copy(m.userData.fallback); m.userData.base.copy(m.userData.fallback); m.needsUpdate = true; }));
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
@@ -141,9 +153,8 @@ function realMaterial(mi){
   const d = MATS[mi];
   const mat = new THREE.MeshLambertMaterial({side:THREE.DoubleSide, transparent:true, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1});
   if (d && d.t){
-    const base = texture(d.t);
-    const t = base.clone();                                   // own repeat per material, same image
-    if (!(JOB.v >= 2)) t.repeat.set(1 / (d.s[0] || 24), 1 / (d.s[1] || 24));   // v2 UVs are already in real-size repeats
+    // v2 UVs are already in real-size repeats; v1 needs the material's tile size
+    const t = JOB.v >= 2 ? textureAt(d.t, 1, 1) : textureAt(d.t, 1 / (d.s[0] || 24), 1 / (d.s[1] || 24));
     mat.map = t; mat.color.set(0xffffff);
     mat.userData.fallback = d.c.clone();
     texUsers[d.t].push(mat);
@@ -391,9 +402,8 @@ function applyFinish(label, choice){
     if (!choice){ mat.map = ud.orig.map; ud.base.copy(ud.orig.base); }
     else if (choice.startsWith('tex:')){
       const src = MATS[m.userData.mi], d = MATS[+choice.slice(4)];
-      const t = texture(d.t).clone(); t.needsUpdate = true;
       const sx = (src && src.t ? src.s[0] : 24) / (d.s[0] || 24), sy = (src && src.t ? src.s[1] : 24) / (d.s[1] || 24);
-      t.repeat.set(JOB.v >= 2 ? sx : 1 / (d.s[0] || 24), JOB.v >= 2 ? sy : 1 / (d.s[1] || 24));
+      const t = JOB.v >= 2 ? textureAt(d.t, sx, sy) : textureAt(d.t, 1 / (d.s[0] || 24), 1 / (d.s[1] || 24));
       mat.map = t; texUsers[d.t].push(mat); ud.base.set(0xffffff);
     } else { mat.map = null; ud.base.set(choice); }
     mat.color.copy(ud.base); mat.needsUpdate = true;
