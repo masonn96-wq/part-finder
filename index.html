@@ -64,6 +64,8 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
     <button id="vSolid" aria-pressed="true" title="Show everything solid">Solid</button>
     <button id="vSee" aria-pressed="false" hidden title="See-through view">See-through</button>
     <button id="vExplode" aria-pressed="false" hidden>Explode</button>
+    <button id="vPrev" hidden title="Previous cabinet">&lsaquo; Prev</button>
+    <button id="vNext" hidden title="Next cabinet">Next &rsaquo;</button>
     <button id="vBack" hidden>Back to job</button>
     <button id="vLayers" aria-pressed="false" title="Show or hide cabinets, materials and parts">Show / hide</button>
   </div>
@@ -591,13 +593,21 @@ function cabFront(cab){
   if (dir.length() > 0.1){ const ctr = boxOf(cab).getCenter(new THREE.Vector3()); const p = ctr.clone().addScaledVector(dir.normalize(), 1000); p.y = c.y; return p; }
   return c;
 }
+// the side of the job the doors and drawers face, so the whole-job view opens on the kitchen's face
+function jobFront(){
+  const n = new THREE.Vector3();
+  for (const mv of movers) if (!mv.m.inner && !mv.parentMv) n.add(mv.n);
+  n.y = 0; if (n.length() < 0.1) return null;
+  const c = boxOf(parts).getCenter(new THREE.Vector3());
+  return c.addScaledVector(n.normalize(), 1000);
+}
 function reframe(){
   if (iso !== null){
     const cab = parts.filter(x => x.p.g === iso);
     frame(boxOf(cab.concat(hardware.filter(h => h.p.g === iso))), exTarget ? 1.5 : 0.85, cabFront(cab));
     return;
   }
-  if (view === 'job' || !sel) frame(boxOf(parts));
+  if (view === 'job' || !sel) frame(boxOf(parts), 1.02, jobFront());
   else {
     const cab = parts.filter(x => x.p.g === sel.p.g);
     const fronts = cab.filter(x => /DSLAB|DOOR|DF/i.test(x.p.code || ''));
@@ -659,7 +669,7 @@ function isolate(g){
   $('vCab').hidden = on; $('vJob').hidden = on; $('vSee').hidden = !on;
   isoSolid = true; $('vSee').setAttribute('aria-pressed', false);
   $('vSolid').hidden = on;
-  $('vExplode').hidden = !on; $('vBack').hidden = !on;
+  $('vExplode').hidden = !on; $('vBack').hidden = !on; $('vPrev').hidden = !on; $('vNext').hidden = !on;
   $('vExplode').setAttribute('aria-pressed', false); $('vExplode').textContent = 'Explode';
   $('card').hidden = on;
   hintText(); paint();
@@ -669,6 +679,20 @@ function isolate(g){
 $('vExplode').onclick = () => { exTarget = exTarget ? 0 : 1; $('vExplode').setAttribute('aria-pressed', !!exTarget);
   $('vExplode').textContent = exTarget ? 'Put back' : 'Explode'; reframe(); };
 $('vSee').onclick = () => { isoSolid = !isoSolid; $('vSee').setAttribute('aria-pressed', !isoSolid); paint(); };
+// step through cabinets in cabinet-number order (cabinets with no number follow, in model order)
+function cabOrder(){
+  const gs = [...new Set(parts.map(x => x.p.g))].filter(g => g >= 0);
+  const num = g => { const n = parseInt(cabNoOf(g), 10); return isNaN(n) ? 1e9 + g : n; };
+  return gs.sort((a, b) => num(a) - num(b));
+}
+function stepCab(d){
+  if (iso === null) return;
+  const order = cabOrder(), i = order.indexOf(iso);
+  for (const mv of movers) mv.target = 0;
+  isolate(order[(i + d + order.length) % order.length]);
+}
+$('vPrev').onclick = () => stepCab(-1);
+$('vNext').onclick = () => stepCab(1);
 $('vBack').onclick = () => { for (const mv of movers) mv.target = 0; isolate(null); };
 $('vCab').onclick = () => setView('cab');
 $('vJob').onclick = () => setView('job');
