@@ -274,14 +274,39 @@ function moveStep(){
     mv.pivot.position.copy(mv.P).addScaledVector(off, ex);
     if (mv.m.t === 'drawer') mv.pivot.position.addScaledVector(mv.n, mv.k * mv.travel);
   }
+  // hinge arms: plate end stays on the cabinet, the other end follows the door's cup
+  for (const a of arms){
+    if (!a.mv.moved && !a.first) continue;
+    a.first = false;
+    const cupNow = a.cup.clone().sub(a.mv.P).applyQuaternion(a.mv.pivot.quaternion).add(a.mv.P);
+    const dir = cupNow.sub(a.plate); const len = dir.length(); if (len < 1) continue;
+    a.pivot.quaternion.setFromUnitVectors(a.dir0, dir.normalize());
+    a.pivot.scale.set(1, 1, 1); a.pivot.scale[a.ax] = Math.max(0.6, Math.min(1.8, len / a.len0));   // arm spans plate to cup
+  }
   if (exDirty){
     for (const x of parts.concat(hardware)){
-      if (x.mover) continue;
+      if (x.mover || x.arm) continue;
       const off = x.off || ZERO;
       for (const ob of x.meshes.concat(x.edges)) ob.position.copy(off).multiplyScalar(ex);
     }
     exDirty = false;
   }
+}
+const arms = [];
+for (const mv of movers) for (const pair of (mv.m.arms || [])){
+  const [k, cupK] = Array.isArray(pair) ? pair : [pair, -1];
+  const h = hardware[k]; if (!h) continue;
+  const size = h.box.getSize(new THREE.Vector3()), c = h.box.getCenter(new THREE.Vector3());
+  const ax = size.x >= size.y && size.x >= size.z ? 'x' : size.y >= size.z ? 'y' : 'z';
+  const e1 = c.clone(), e2 = c.clone(); e1[ax] -= size[ax] / 2; e2[ax] += size[ax] / 2;
+  // the arm's cabinet end stays put; its other end reaches for the hinge cup on the door
+  const target = cupK >= 0 && hardware[cupK] ? hardware[cupK].box.getCenter(new THREE.Vector3()) : parts[mv.m.f].box.getCenter(new THREE.Vector3());
+  const cup = e1.distanceTo(target) < e2.distanceTo(target) ? e1 : e2, plate = cup === e1 ? e2 : e1;
+  const reach = cupK >= 0 && hardware[cupK] ? target : cup;
+  const pivot = new THREE.Object3D(); pivot.position.copy(plate); scene.add(pivot);
+  for (const ob of h.meshes.concat(h.edges)){ scene.remove(ob); ob.position.sub(plate); pivot.add(ob); }
+  const a = {mv, h, pivot, plate, cup: reach, dir0: cup.clone().sub(plate).normalize(), len0: cup.distanceTo(plate), ax, first: true};
+  h.arm = a; arms.push(a);
 }
 for (const mv of movers){
   mv.front = parts[mv.m.f]; mv.inners = [];
@@ -658,7 +683,9 @@ function isolate(g){
   for (const x of parts.concat(hardware)) x.off = null;
   if (g !== null){
     const cc = boxOf(items).getCenter(new THREE.Vector3());
-    for (const x of items) x.off = x.box.getCenter(new THREE.Vector3()).sub(cc).multiplyScalar(0.9);
+    // explode the cabinet's own parts only; appliances, hinges and other hardware stay put
+    // (hardware on a door or drawer still travels with it)
+    for (const x of items) x.off = parts.includes(x) ? x.box.getCenter(new THREE.Vector3()).sub(cc).multiplyScalar(0.9) : null;
     const named = parts.find(x => x.p.g === g && x.p.cabNo);
     const no = cabNoOf(g);
     $('room').textContent = named ? 'Cab ' + named.p.cabNo + ' · ' + named.p.cabName : no ? 'Cab ' + no : 'Cabinet';
