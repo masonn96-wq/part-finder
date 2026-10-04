@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Job Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: single working column; two drop zones, one build button, then the match report */
+:root{
+  --bg:#eef0f1; --card:#ffffff; --fg:#1d2226; --muted:#5d666d; --line:#cdd2d6;
+  --hi:#f2600c; --hi-ink:#ffffff; --ok:#2f7d4f; --warn:#b26a00; --bad:#c0392b;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#15191c; --card:#22282c; --fg:#e8ecee; --muted:#9aa4ab; --line:#343c42;
+  --hi:#ff7a2e; --hi-ink:#1a0e05; --ok:#5cc28a; --warn:#e3a33b; --bad:#ff6b5b; color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--display);font-size:15px}
+summary{cursor:pointer}
+main{max-width:860px;margin:0 auto;padding:24px 16px 48px;display:grid;gap:18px}
+h1{font-size:28px;margin:0;letter-spacing:.01em}
+.sub{color:var(--muted);margin:4px 0 0}
+.drops{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.drop{background:var(--card);border:2px dashed var(--line);border-radius:10px;padding:16px;display:grid;gap:6px;cursor:pointer;min-width:0}
+.drop.over{border-color:var(--hi)}
+.drop.done{border-style:solid;border-color:var(--ok)}
+.drop b{font-size:17px}
+.drop .hint{color:var(--muted);font-size:13px}
+.drop .files{font:500 12px var(--mono);color:var(--fg);word-break:break-all}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
+label{display:grid;gap:4px;font-size:13px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+input[type=text]{font:600 16px var(--mono);padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);width:180px}
+button{font:600 15px var(--display);letter-spacing:.03em;padding:11px 18px;border-radius:6px;border:0;background:var(--hi);color:var(--hi-ink);cursor:pointer}
+button:disabled{opacity:.4;cursor:default}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button:focus-visible,input:focus-visible,.drop:focus-visible{outline:2px solid var(--hi);outline-offset:2px}
+#status{font:500 13px var(--mono);color:var(--muted);min-height:1.2em}
+.summary{background:var(--card);border-radius:10px;padding:16px;display:grid;gap:10px}
+.big{font-size:22px;font-weight:700}
+.pill{display:inline-block;font:600 12px var(--mono);padding:2px 8px;border-radius:999px;border:1px solid currentColor}
+.ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+.steps{margin:0;padding-left:20px;display:grid;gap:4px}
+.steps a{color:var(--hi)}
+.tablewrap{overflow-x:auto;background:var(--card);border-radius:10px}
+table{border-collapse:collapse;width:100%;font:500 13px var(--mono);font-variant-numeric:tabular-nums}
+th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-family:var(--display);font-weight:600;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;font-size:12px}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Job Builder</h1>
+    <p class="sub">Drop the job folder. It finds the 3D export and every parts list, builds the job, and publishes it to Part Finder.</p>
+  </header>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose the job folder">
+    <b>Drop the job folder here</b>
+    <span class="hint">The folder with the .dae and the material run folders (.csv). Or click to choose it.</span>
+    <span class="files" id="found"></span>
+    <input type="file" id="folderInput" webkitdirectory multiple hidden>
+  </div>
+
+  <div class="row">
+    <label for="jobKey">Job number
+      <input type="text" id="jobKey" placeholder="J1093" autocomplete="off">
+    </label>
+    <button id="build" class="ghost" disabled>Build again</button>
+    <button id="publish" hidden>Publish to Part Finder</button>
+    <button id="download" class="ghost" hidden>Download</button>
+  </div>
+  <div id="status" role="status"></div>
+
+  <section class="summary" id="summary" hidden></section>
+  <div class="tablewrap" id="tableWrap" hidden><table id="report"></table></div>
+
+  <details class="summary" id="setup">
+    <summary><b>GitHub key</b> <span id="keyState" class="pill"></span></summary>
+    <p class="sub">Publishing needs a GitHub key saved in this browser once. Make one at
+      <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → Fine-grained tokens</a>:
+      repository access <b>Only select repositories → part-finder</b>, permission <b>Contents: Read and write</b>. Paste it here.</p>
+    <div class="row">
+      <label for="ghKey">Key <input type="password" id="ghKey" autocomplete="off" style="width:320px;font:500 14px var(--mono);padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)"></label>
+      <button id="saveKey" class="ghost">Save key</button>
+    </div>
+  </details>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/earcut@2.2.4/dist/earcut.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const status = t => { $('status').textContent = t; };
+const tick = () => new Promise(r => setTimeout(r, 0));
+let daeFile = null, csvFiles = [], output = null, outName = '';
+
+// ---------- job folder ----------
+const zone = $('drop'), input = $('folderInput');
+zone.addEventListener('click', () => input.click());
+zone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+input.addEventListener('change', () => takeFiles([...input.files]));
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('over'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+zone.addEventListener('drop', async e => {
+  e.preventDefault(); zone.classList.remove('over');
+  const entries = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  takeFiles(entries.length ? await readEntries(entries) : [...e.dataTransfer.files]);
+});
+async function readEntries(entries){
+  const out = [];
+  async function walk(en){
+    if (en.isFile) out.push(await new Promise((res, rej) => en.file(res, rej)));
+    else if (en.isDirectory){ const r = en.createReader(); let batch;
+      do { batch = await new Promise((res, rej) => r.readEntries(res, rej)); for (const c of batch) await walk(c); } while (batch.length); }
+  }
+  for (const en of entries) await walk(en);
+  return out;
+}
+async function takeFiles(files){
+  const daes = files.filter(f => /\.dae$/i.test(f.name)).sort((a, b) => b.size - a.size);
+  const csvs = files.filter(f => /\.csv$/i.test(f.name));
+  if (!daes.length && !csvs.length){ status('No .dae or .csv files in that folder.'); return; }
+  if (daes.length) daeFile = daes[0];
+  for (const f of csvs) if (!csvFiles.some(x => x.name === f.name && x.size === f.size)) csvFiles.push(f);
+  $('found').textContent = (daeFile ? daeFile.name + ' (' + (daeFile.size / 1e6).toFixed(0) + ' MB)' : 'no .dae found') + ' · ' +
+    csvFiles.length + ' parts list' + (csvFiles.length === 1 ? '' : 's') + (daes.length > 1 ? ' · ' + daes.length + ' .dae files, using the largest' : '');
+  zone.classList.toggle('done', !!(daeFile && csvFiles.length));
+  if (csvFiles.length && !$('jobKey').value){ const rows = parseCSV(await csvFiles[0].text()); if (rows[0]) $('jobKey').value = jobKeyOf(rows[0][57] || ''); }
+  ready();
+  if (!daeFile){ status('Add the .dae export for this job (drop it here too).'); return; }
+  if (!csvFiles.length){ status('Add the parts lists (.csv) for this job.'); return; }
+  build();
+}
+$('jobKey').addEventListener('input', ready);
+function ready(){ $('build').disabled = !(daeFile && csvFiles.length && $('jobKey').value.trim()); }
+
+// ---------- GitHub key (kept only in this browser) ----------
+const OWNER = 'masonn96-wq', REPO = 'part-finder', BRANCH = 'main';
+function getKey(){ try { return localStorage.getItem('pf-gh-key') || ''; } catch (_) { return ''; } }
+function showKey(){ const k = getKey(); $('keyState').textContent = k ? 'saved' : 'not set'; $('keyState').className = 'pill ' + (k ? 'ok' : 'warn'); if (!k) $('setup').open = true; }
+$('saveKey').addEventListener('click', () => { try { localStorage.setItem('pf-gh-key', $('ghKey').value.trim()); } catch (_) {} $('ghKey').value = ''; showKey(); if (output) $('publish').hidden = !getKey(); });
+showKey();
+
+async function gh(path, opts = {}){
+  const r = await fetch('https://api.github.com/repos/' + OWNER + '/' + REPO + path, {...opts,
+    headers: {'Authorization': 'Bearer ' + getKey(), 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'}});
+  if (!r.ok){ const t = await r.text(); throw new Error(r.status === 401 ? 'GitHub key is wrong or expired. Save a new one below.' :
+    r.status === 403 || r.status === 404 ? 'GitHub key can\'t write to part-finder. Check it has Contents: Read and write.' : 'GitHub said ' + r.status + ': ' + t.slice(0, 120)); }
+  return r.json();
+}
+function toBase64(str){
+  const bytes = new TextEncoder().encode(str); let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+async function publish(){
+  $('publish').disabled = true;
+  try {
+    status('Publishing ' + outName + '…');
+    const ref = await gh('/git/ref/heads/' + BRANCH);
+    const head = await gh('/git/commits/' + ref.object.sha);
+    const blob = await gh('/git/blobs', {method: 'POST', body: JSON.stringify({content: toBase64(output), encoding: 'base64'})});
+    const tree = await gh('/git/trees', {method: 'POST', body: JSON.stringify({base_tree: head.tree.sha, tree: [{path: 'jobs/' + outName, mode: '100644', type: 'blob', sha: blob.sha}]})});
+    const commit = await gh('/git/commits', {method: 'POST', body: JSON.stringify({message: 'Job ' + $('jobKey').value.trim(), tree: tree.sha, parents: [ref.object.sha]})});
+    await gh('/git/refs/heads/' + BRANCH, {method: 'PATCH', body: JSON.stringify({sha: commit.sha})});
+    status('Published. Stickers for job ' + $('jobKey').value.trim() + ' will work in about a minute.');
+    $('publish').textContent = 'Published ✓';
+  } catch (err){ status('Not published: ' + err.message); $('publish').disabled = false; }
+}
+$('publish').addEventListener('click', publish);
+
+// same rule as the Part Finder page: job number at the front of the job name
+function jobKeyOf(name){ const m = name.trim().match(/(?:^|[^A-Za-z0-9])(J\d{3,})(?!\d)/i); return (m ? m[1].toUpperCase() : name.trim()); }
+function fileKey(k){ return k.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
+
+// ---------- CSV ----------
+function parseCSV(text){
+  const rows = []; let row = [], f = '', q = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i];
+    if (q){ if (c === '"'){ if (text[i + 1] === '"'){ f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === ','){ row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r'){ if (c === '\r' && text[i + 1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
+    else f += c;
+  }
+  if (f || row.length){ row.push(f); rows.push(row); }
+  return rows.filter(r => r.length > 86);
+}
+const num = s => { const v = parseFloat(s); return Number.isFinite(v) ? v : 0; };
+
+// ---------- 4x4 maths (row-major) ----------
+const I4 = () => [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+function mul(a, b){ const o = new Array(16).fill(0);
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++){ let s = 0; for (let k = 0; k < 4; k++) s += a[r*4+k] * b[k*4+c]; o[r*4+c] = s; } return o; }
+function localTransform(node){
+  let m = I4();
+  for (const ch of node.children){
+    const t = ch.localName, v = (ch.textContent || '').trim().split(/\s+/).map(num);
+    if (t === 'matrix' && v.length >= 16) m = mul(m, v.slice(0, 16));
+    else if (t === 'translate'){ const T = I4(); T[3] = v[0]; T[7] = v[1]; T[11] = v[2]; m = mul(m, T); }
+    else if (t === 'rotate'){
+      let [x, y, z, a] = v; const n = Math.hypot(x, y, z) || 1; x /= n; y /= n; z /= n; a = a * Math.PI / 180;
+      const c = Math.cos(a), s = Math.sin(a), k = 1 - c;
+      m = mul(m, [c+x*x*k, x*y*k-z*s, x*z*k+y*s, 0,  y*x*k+z*s, c+y*y*k, y*z*k-x*s, 0,  z*x*k-y*s, z*y*k+x*s, c+z*z*k, 0,  0,0,0,1]);
+    }
+  }
+  return m;
+}
+
+// ---------- geometry ----------
+function kids(el, name){ const o = []; for (const c of el.children) if (c.localName === name) o.push(c); return o; }
+function kid(el, name){ for (const c of el.children) if (c.localName === name) return c; return null; }
+function decodeGeometry(g){
+  const mesh = kid(g, 'mesh'); if (!mesh) return null;
+  const sources = {};
+  for (const s of kids(mesh, 'source')){
+    const fa = kid(s, 'float_array'); if (!fa) continue;
+    const acc = s.getElementsByTagName('accessor')[0];
+    sources[s.getAttribute('id')] = {a: fa.textContent.trim().split(/\s+/).map(num), stride: acc ? +acc.getAttribute('stride') || 3 : 3};
+  }
+  const verts = kid(mesh, 'vertices'); if (!verts) return null;
+  const src = sources[kid(verts, 'input').getAttribute('source').slice(1)]; if (!src) return null;
+  const n = src.a.length / src.stride, pos = new Float64Array(n * 3);
+  for (let i = 0; i < n; i++){ pos[i*3] = src.a[i*src.stride]; pos[i*3+1] = src.a[i*src.stride+1]; pos[i*3+2] = src.a[i*src.stride+2]; }
+  const polys = [];
+  for (const prim of mesh.children){
+    const t = prim.localName; if (!['polylist', 'polygons', 'triangles'].includes(t)) continue;
+    const ins = kids(prim, 'input'); const stride = Math.max(...ins.map(i => +i.getAttribute('offset') || 0)) + 1;
+    const voff = +(ins.find(i => i.getAttribute('semantic') === 'VERTEX').getAttribute('offset') || 0);
+    const idx = text => { const a = text.trim().split(/\s+/).map(Number), o = []; for (let i = voff; i < a.length; i += stride) o.push(a[i]); return o; };
+    if (t === 'polylist'){ const vc = kid(prim, 'vcount').textContent.trim().split(/\s+/).map(Number), ids = idx(kid(prim, 'p').textContent); let k = 0; for (const c of vc){ polys.push(ids.slice(k, k + c)); k += c; } }
+    else if (t === 'triangles'){ const ids = idx(kid(prim, 'p').textContent); for (let k = 0; k < ids.length; k += 3) polys.push(ids.slice(k, k + 3)); }
+    else { for (const p of kids(prim, 'p')) polys.push(idx(p.textContent)); for (const ph of kids(prim, 'ph')) polys.push(idx(kid(ph, 'p').textContent)); }
+  }
+  // triangulate each outer loop (holes skipped: smaller file, same panel outline)
+  const tri = [];
+  for (const loop of polys){
+    if (loop.length < 3) continue;
+    let nx = 0, ny = 0, nz = 0;
+    for (let i = 0; i < loop.length; i++){ const a = loop[i]*3, b = loop[(i+1) % loop.length]*3;
+      nx += (pos[a+1]-pos[b+1]) * (pos[a+2]+pos[b+2]); ny += (pos[a+2]-pos[b+2]) * (pos[a]+pos[b]); nz += (pos[a]-pos[b]) * (pos[a+1]+pos[b+1]); }
+    const nl = Math.hypot(nx, ny, nz); if (nl < 1e-12) continue; nx /= nl; ny /= nl; nz /= nl;
+    let r = Math.abs(nx) < .9 ? [1,0,0] : [0,1,0];
+    let ux = ny*r[2]-nz*r[1], uy = nz*r[0]-nx*r[2], uz = nx*r[1]-ny*r[0]; const ul = Math.hypot(ux, uy, uz); ux /= ul; uy /= ul; uz /= ul;
+    const vx = ny*uz-nz*uy, vy = nz*ux-nx*uz, vz = nx*uy-ny*ux;
+    const flat = []; for (const i of loop){ const x = pos[i*3], y = pos[i*3+1], z = pos[i*3+2]; flat.push(x*ux+y*uy+z*uz, x*vx+y*vy+z*vz); }
+    for (const k of earcut(flat)) tri.push(loop[k]);
+  }
+  return {pos, tri};
+}
+
+const PANEL = new Set(['LU','RU','UB','TO','BO','DE','AS','FS','SL','FT','BT','SFT','S_DSLAB','BK','FB','PL','MU','DF','DB','DS','DBO','PT','PANEL','FILLER','BBK','BBT','BBO','BFR','BSD','DBAND','ROBT','ROBK','ROF','BS']);
+const SKIP = ['BORE','HOLE','DADO','NOTCH','WALL','BNDEX','BNDIN','SCREW','ROUTE','LINE','ARC'];
+const CONTEXT_MIN_MM = 150;
+
+// ---------- build ----------
+async function build(){
+  $('build').disabled = true; $('download').hidden = true; $('publish').hidden = true; $('publish').disabled = false; $('publish').textContent = 'Publish to Part Finder'; $('summary').hidden = true; $('tableWrap').hidden = true;
+  try {
+    status('Reading parts lists…'); await tick();
+    const rows = [], seen = new Set(), warnings = [];
+    for (const f of csvFiles){ for (const r of parseCSV(await f.text())){ const id = r[1].trim();
+      if (seen.has(id)){ warnings.push('Part ' + id + ' is in more than one CSV (' + f.name + '), skipped the copy.'); continue; }
+      seen.add(id); rows.push(r); if (r[4].trim()) PANEL.add(r[4].trim()); } }
+    const csvParts = rows.map(r => ({id: r[1].trim(), name: r[3], code: r[4], L: num(r[7]), W: num(r[8]), cabNo: r[45], cabName: r[47],
+      cabDesc: r[54], room: r[44], material: r[83], thick: num(r[86]), cabSize: [num(r[48]), num(r[49]), num(r[50])].sort((a, b) => a - b)}));
+
+    status('Reading 3D export (' + (daeFile.size / 1e6).toFixed(0) + ' MB)…'); await tick();
+    let text = await daeFile.text();
+    if (text.charCodeAt(0) === 0xFFFE || text.indexOf('\u0000') !== -1) throw new Error('This .dae was saved as Unicode. Export it again from CV as UTF-8.');
+    status('Parsing 3D export…'); await tick();
+    const doc = new DOMParser().parseFromString(text, 'application/xml'); text = null;
+    if (doc.getElementsByTagName('parsererror').length) throw new Error('The .dae could not be read. Export it again from CV as UTF-8.');
+    const geoms = {}; for (const g of doc.getElementsByTagName('geometry')) geoms[g.getAttribute('id')] = g;
+    const lib = {}; const ln = doc.getElementsByTagName('library_nodes')[0];
+    if (ln) for (const n of kids(ln, 'node')) lib[n.getAttribute('id')] = n;
+    const cache = {}, parts = new Map(), context = [];
+
+    function emit(libnode, world, vnId, path){
+      const m0 = (libnode.getAttribute('name') || '').match(/^N_(.+?)-/); if (!m0) return;
+      const code = m0[1]; if (SKIP.some(w => code.toUpperCase().includes(w))) return;
+      const m = vnId.match(/_(\d+)_?([a-z])$/), key = m ? m[1] : vnId;
+      const W = mul(world, localTransform(libnode));
+      for (const ig of kids(libnode, 'instance_geometry')){
+        const gid = ig.getAttribute('url').slice(1);
+        if (!(gid in cache)) cache[gid] = geoms[gid] ? decodeGeometry(geoms[gid]) : null;
+        const G = cache[gid]; if (!G || !G.tri.length) continue;
+        const n = G.pos.length / 3, wp = new Float64Array(n * 3);
+        for (let i = 0; i < n; i++){ const x = G.pos[i*3], y = G.pos[i*3+1], z = G.pos[i*3+2];
+          wp[i*3] = (W[0]*x + W[1]*y + W[2]*z + W[3]) * 25.4; wp[i*3+1] = (W[4]*x + W[5]*y + W[6]*z + W[7]) * 25.4; wp[i*3+2] = (W[8]*x + W[9]*y + W[10]*z + W[11]) * 25.4; }
+        if (PANEL.has(code)){ if (!parts.has(key)) parts.set(key, {code, chunks: [], path}); parts.get(key).chunks.push([wp, G.tri]); }
+        else if (Math.max(...ext(wp)) >= CONTEXT_MIN_MM) context.push([[wp, G.tri]]);
+      }
+    }
+    function walk(node, parent, path){
+      const world = mul(parent, localTransform(node));
+      for (const inst of kids(node, 'instance_node')){ const l = lib[inst.getAttribute('url').slice(1)]; if (l) emit(l, world, node.getAttribute('id') || '', path); }
+      for (const ch of kids(node, 'node')) walk(ch, world, path.concat(ch.getAttribute('id') || ''));
+    }
+    status('Building panels…'); await tick();
+    const vs = doc.getElementsByTagName('visual_scene')[0];
+    for (const n of kids(vs, 'node')) walk(n, I4(), [n.getAttribute('id') || '']);
+
+    const dae = [];
+    for (const [key, p] of parts){ const {P, I} = pack(p.chunks); const e = ext(P);
+      dae.push({key, code: p.code, P, I, path: p.path, dims: [...e].sort((a, b) => a - b), center: centre(P), ext: e}); }
+
+    // cabinets: CV nests scene > room > wall > cabinet
+    let depth = 3;
+    if (!dae.every(d => d.path.length > 4)){ depth = 0; while (depth < 12 && new Set(dae.map(d => d.path.slice(0, depth + 1).join('/'))).size <= 1) depth++; }
+    const cabMap = new Map(); dae.forEach((d, i) => { const k = d.path.slice(0, depth + 1).join('/'); if (!cabMap.has(k)) cabMap.set(k, []); cabMap.get(k).push(i); });
+    const daeCabs = [...cabMap.values()];
+
+    status('Matching parts…'); await tick();
+    const csvCabs = new Map(); csvParts.forEach((c, i) => { if (!csvCabs.has(c.cabNo)) csvCabs.set(c.cabNo, []); csvCabs.get(c.cabNo).push(i); });
+    const cabOrder = [...csvCabs.keys()].sort((a, b) => (+a || 1e9) - (+b || 1e9) || a.localeCompare(b));
+    const partCost = (ci, di) => { const c = csvParts[ci], d = dae[di], w = [c.L, c.W].sort((a, b) => a - b);
+      return Math.abs(d.dims[1]-w[0]) + Math.abs(d.dims[2]-w[1]) + Math.abs(d.dims[0]-c.thick) + (d.code !== c.code ? 1000 : 0); };
+    const matchParts = (cis, dis) => { const cand = []; for (const ci of cis) for (const di of dis) cand.push([partCost(ci, di), ci, di]);
+      cand.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]); const uc = new Set(), ud = new Set(), m = new Map();
+      for (const [cost, ci, di] of cand){ if (uc.has(ci) || ud.has(di) || cost > 1000) continue; uc.add(ci); ud.add(di); m.set(ci, [di, cost]); } return m; };
+    const cabCost = (cis, dis) => { const m = matchParts(cis, dis); let cost = 1000 * (cis.length - m.size); for (const [, c] of m.values()) cost += c;
+      const box = ext(concat(dis.map(di => dae[di].P))).sort((a, b) => a - b), want = csvParts[cis[0]].cabSize;
+      return cost + 0.2 * box.reduce((s, v, i) => s + Math.abs(v - want[i]), 0); };
+
+    // align cabinets in order (CV exports cabinets in cabinet-number order)
+    const n = cabOrder.length, M = daeCabs.length;
+    const cost = cabOrder.map(cab => daeCabs.map(dis => cabCost(csvCabs.get(cab), dis)));
+    const dp = Array.from({length: n + 1}, () => new Array(M + 1).fill(Infinity)); dp[0].fill(0);
+    for (let i = 1; i <= n; i++) for (let j = i; j <= M; j++) dp[i][j] = Math.min(dp[i][j-1], dp[i-1][j-1] + cost[i-1][j-1]);
+    const match = new Map(); let j = M;
+    for (let i = n; i >= 1; i--){ while (j > i && dp[i][j] === dp[i][j-1]) j--; for (const [ci, v] of matchParts(csvCabs.get(cabOrder[i-1]), daeCabs[j-1])) match.set(ci, v); j--; }
+
+    // left / right within a cabinet: LU -> RU is "rightward"
+    for (const cis of csvCabs.values()){
+      const dis = cis.filter(ci => match.has(ci)).map(ci => match.get(ci)[0]);
+      const lu = dis.find(di => dae[di].code === 'LU'), ru = dis.find(di => dae[di].code === 'RU'); if (lu === undefined || ru === undefined) continue;
+      const rx = dae[ru].center[0] - dae[lu].center[0], rz = dae[ru].center[2] - dae[lu].center[2], rl = Math.hypot(rx, rz); if (rl < 1e-6) continue;
+      const proj = di => (dae[di].center[0] * rx + dae[di].center[2] * rz) / rl;
+      for (const g of groupBy(cis.filter(ci => match.has(ci)), ci => [csvParts[ci].code, csvParts[ci].L, csvParts[ci].W].join('|'))){
+        const L = g.find(ci => /Left/.test(csvParts[ci].name)), R = g.find(ci => /Right/.test(csvParts[ci].name));
+        if (g.length === 2 && L !== undefined && R !== undefined){ const dd = g.map(ci => match.get(ci)[0]).sort((a, b) => proj(a) - proj(b));
+          match.set(L, [dd[0], match.get(L)[1]]); match.set(R, [dd[1], match.get(R)[1]]); }
+      }
+    }
+    // same size, different names (Sleeper vs Top Sleeper): flat panels get the "Top/Bottom/Shelf" names
+    const FLAT = ['Top', 'Bottom', 'Shelf', 'Deck', 'Base'];
+    for (const g of groupBy([...match.keys()], ci => [csvParts[ci].code, csvParts[ci].L, csvParts[ci].W, csvParts[ci].cabNo].join('|'))){
+      if (new Set(g.map(ci => csvParts[ci].name)).size < 2) continue;
+      const isFlat = di => { const e = dae[di].ext; return e[1] <= e[0] && e[1] <= e[2]; };
+      const dis = g.map(ci => match.get(ci)[0]), fd = dis.filter(isFlat), ud = dis.filter(d => !isFlat(d));
+      const fc = g.filter(ci => FLAT.some(w => csvParts[ci].name.includes(w))), uc = g.filter(ci => !fc.includes(ci));
+      if (fd.length === fc.length && ud.length === uc.length){ fc.forEach((ci, k) => match.set(ci, [fd[k], match.get(ci)[1]])); uc.forEach((ci, k) => match.set(ci, [ud[k], match.get(ci)[1]])); }
+    }
+    // numbered parts (Drawer Front 1, 2, 3): number 1 is the top one
+    for (const g of groupBy([...match.keys()].filter(ci => /\d+\s*$/.test(csvParts[ci].name)),
+         ci => [csvParts[ci].name.replace(/\d+\s*$/, '').trim(), csvParts[ci].code, csvParts[ci].cabNo].join('|'))){
+      if (g.length < 2 || new Set(g.map(ci => csvParts[ci].L + 'x' + csvParts[ci].W)).size !== 1) continue;
+      g.sort((a, b) => parseInt(csvParts[a].name.match(/(\d+)\s*$/)[1]) - parseInt(csvParts[b].name.match(/(\d+)\s*$/)[1]));
+      const dd = g.map(ci => match.get(ci)[0]).sort((a, b) => dae[b].center[1] - dae[a].center[1]);
+      g.forEach((ci, k) => match.set(ci, [dd[k], match.get(ci)[1]]));
+    }
+
+    // output
+    status('Writing job file…'); await tick();
+    const all = concat(dae.map(d => d.P)), e = mins(all);
+    const origin = [(e.min[0] + e.max[0]) / 2, e.min[1], (e.min[2] + e.max[2]) / 2];
+    const enc = (P, I) => { const p = new Array(P.length); for (let i = 0; i < P.length; i++) p[i] = Math.round(P[i] - origin[i % 3]); return {p, i: I}; };
+    const dToC = new Map([...match].map(([ci, [di]]) => [di, ci])), dToG = new Map(); daeCabs.forEach((dis, k) => dis.forEach(di => dToG.set(di, k)));
+    const key = $('jobKey').value.trim();
+    const outParts = dae.map((d, di) => { const rec = {mesh: enc(d.P, d.I), g: dToG.get(di)}; const ci = dToC.get(di);
+      if (ci !== undefined){ const c = csvParts[ci]; for (const k of ['id','name','code','L','W','thick','cabNo','cabName','cabDesc','room','material']) rec[k] = c[k]; }
+      else { rec.id = null; rec.name = d.code; rec.code = d.code; } return rec; });
+    output = JSON.stringify({job: key, parts: outParts, context: context.map(ch => { const {P, I} = pack(ch); return enc(P, I); })});
+    outName = fileKey(key) + '.json';
+    // size check on length x width only (sleepers etc. export thicker than the sheet)
+    const lw = new Map([...match].map(([ci, [di]]) => { const c = csvParts[ci], w = [c.L, c.W].sort((a, b) => a - b);
+      return [ci, [di, Math.abs(dae[di].dims[1] - w[0]) + Math.abs(dae[di].dims[2] - w[1])]]; }));
+    report(csvParts, lw, warnings, (output.length / 1e6).toFixed(1));
+    $('download').hidden = false; $('download').textContent = 'Download';
+    $('publish').hidden = !getKey();
+    status(getKey() ? 'Built. Check the matches, then click Publish.' : 'Built. Save your GitHub key below to publish, or download the file.');
+  } catch (err){ status('Stopped: ' + err.message); }
+  ready();
+}
+
+function report(csvParts, match, warnings, mb){
+  const total = csvParts.length, ok = match.size, flagged = [...match.values()].filter(([, c]) => c > 10).length;
+  const cls = ok < total ? 'bad' : flagged ? 'warn' : 'ok';
+  const s = $('summary');
+  s.innerHTML = '<div class="big"><span class="' + cls + '">' + ok + ' of ' + total + '</span> parts matched</div>' +
+    (flagged ? '<div class="warn">' + flagged + ' part(s) matched with a size difference over 10 mm. Check them in the table.</div>' : '') +
+    warnings.map(w => '<div class="warn">' + esc(w) + '</div>').join('') +
+    '<div>File size ' + mb + ' MB.</div>' +
+    '';
+  s.hidden = false;
+  const rows = csvParts.map((c, ci) => ({c, m: match.get(ci)})).sort((a, b) => (+a.c.cabNo - +b.c.cabNo) || (+a.c.id - +b.c.id));
+  $('report').innerHTML = '<thead><tr><th>ID</th><th>Cab</th><th>Part</th><th>Size</th><th>Match</th></tr></thead><tbody>' +
+    rows.map(({c, m}) => '<tr><td>' + esc(c.id) + '</td><td>' + esc(c.cabNo) + '</td><td>' + esc(c.name) + '</td><td>' + Math.round(c.L) + ' × ' + Math.round(c.W) + '</td><td>' +
+      (!m ? '<span class="pill bad">not found</span>' : m[1] > 10 ? '<span class="pill warn">±' + Math.round(m[1]) + ' mm</span>' : '<span class="pill ok">ok</span>') + '</td></tr>').join('') + '</tbody>';
+  $('tableWrap').hidden = false;
+}
+
+// ---------- helpers ----------
+function pack(chunks){ let n = 0; for (const [p] of chunks) n += p.length; const P = new Float64Array(n), I = []; let off = 0;
+  for (const [p, t] of chunks){ P.set(p, off); const b = off / 3; for (const i of t) I.push(i + b); off += p.length; } return {P, I}; }
+function concat(arrs){ let n = 0; for (const a of arrs) n += a.length; const o = new Float64Array(n); let k = 0; for (const a of arrs){ o.set(a, k); k += a.length; } return o; }
+function mins(P){ const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < P.length; i++){ const a = i % 3; if (P[i] < min[a]) min[a] = P[i]; if (P[i] > max[a]) max[a] = P[i]; } return {min, max}; }
+function ext(P){ const e = mins(P); return [e.max[0] - e.min[0], e.max[1] - e.min[1], e.max[2] - e.min[2]]; }
+function centre(P){ const c = [0, 0, 0], n = P.length / 3; for (let i = 0; i < P.length; i++) c[i % 3] += P[i]; return c.map(v => v / n); }
+function groupBy(arr, f){ const m = new Map(); for (const x of arr){ const k = f(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return [...m.values()]; }
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+$('build').addEventListener('click', build);
+$('download').addEventListener('click', () => {
+  const url = URL.createObjectURL(new Blob([output], {type: 'application/json'}));
+  const a = document.createElement('a'); a.href = url; a.download = outName; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+});
+</script>
+</body>
+</html>
