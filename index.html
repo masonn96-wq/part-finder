@@ -321,7 +321,7 @@ function setLook(x, opacity, edgeColor, edgeOpacity, tint){
     mat.emissive.copy(tint || new THREE.Color(0)); mat.userData.glow = !!tint;
     m.renderOrder = opacity > .9 ? 2 : 1;
   }
-  for (const e of x.edges){ e.material.color.copy(edgeColor); e.material.opacity = edgeOpacity; }
+  for (const e of x.edges){ e.material.color.copy(edgeColor); e.material.opacity = edgeOpacity; e.material.visible = edgeOpacity > 0; }
 }
 function paint(){
   const c = n => new THREE.Color(css(n));
@@ -331,14 +331,14 @@ function paint(){
   if (iso !== null){                       // isolated cabinet: solid, or see-through wireframe
     for (const x of parts){
       if (x === sel) setLook(x, 1, hi, 1, hi);
-      else if (isoSolid) setLook(x, 1, edge, .2);
+      else if (isoSolid) setLook(x, 1, edge, 0);
       else setLook(x, .18, edge, .85);
     }
-    for (const h of hardware) if (h.p.k !== 'wall') isoSolid ? setLook(h, 1, edge, .2) : setLook(h, .15, edge, .6);
+    for (const h of hardware) if (h.p.k !== 'wall') isoSolid ? setLook(h, 1, edge, 0) : setLook(h, .15, edge, .6);
     return;
   }
   for (const x of parts){
-    if (solid) setLook(x, 1, x === sel ? hi : edge, x === sel ? 1 : .12, x === sel ? hi : null);
+    if (solid) setLook(x, 1, x === sel ? hi : edge, x === sel ? 1 : 0, x === sel ? hi : null);   // solid: no outline lines
     else if (!sel) setLook(x, 1, edge, .35);
     else if (x === sel) setLook(x, 1, hi, 1, hi);
     else if (x.p.g === sel.p.g) setLook(x, .3, edge, .5);
@@ -347,7 +347,7 @@ function paint(){
   for (const h of hardware){
     if (h.p.k === 'wall'){ for (const m of h.meshes) m.material.opacity = h.fade; continue; }
     const near = sel && h.p.g === sel.p.g;
-    if (solid) setLook(h, 1, edge, .12);
+    if (solid) setLook(h, 1, edge, 0);
     else setLook(h, !sel ? 1 : near ? .3 : .05, edge, !sel ? .35 : near ? .4 : .05);
   }
 }
