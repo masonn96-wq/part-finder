@@ -117,8 +117,12 @@ controls.rotateSpeed = 0.55;
 controls.zoomSpeed = 0.6;
 controls.panSpeed = 0.6;
 controls.screenSpacePanning = true;
-scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8178, 0.75));
-const sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(1500, 3000, 2500); scene.add(sun);
+// light mostly comes from the viewer (a lamp on the camera), so the faces you look at are the brightest and
+// thin edges / route bevels turned toward a fixed sun don't glow white
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8178, 0.5));
+const sun = new THREE.DirectionalLight(0xffffff, 0.15); sun.position.set(1500, 3000, 2500); scene.add(sun);
+const headlamp = new THREE.DirectionalLight(0xffffff, 0.6); headlamp.position.set(0.3, 0.5, 1);
+camera.add(headlamp); headlamp.target.position.set(0, 0, -1); camera.add(headlamp.target); scene.add(camera);
 
 // ---- materials (v2 files carry real CV materials + textures; v1 files get plain board colour) ----
 const loader = new THREE.TextureLoader();
