@@ -377,10 +377,13 @@ function moveStep(){
     if (moving) mv.k += (mv.target - mv.k) * (still ? 1 : 0.14);
     mv.moved = moving;
     if (!moving && !exDirty) continue;
-    if (mv.m.t === 'door') mv.pivot.quaternion.setFromAxisAngle(mv.axis, mv.k * (mv.m.a != null ? mv.m.a : 110) * Math.PI / 180);
+    // pocket doors (m.slide): first half of the move turns the door, second half slides it back into the pocket
+    const turn = mv.m.slide != null ? Math.min(1, mv.k * 2) : mv.k;
+    if (mv.m.t === 'door') mv.pivot.quaternion.setFromAxisAngle(mv.axis, turn * (mv.m.a != null ? mv.m.a : 110) * Math.PI / 180);
     const off = mv.parentMv ? ZERO : (mv.front && mv.front.off) || ZERO;
     mv.pivot.position.copy(mv.P).addScaledVector(off, ex);
     if (mv.m.t === 'drawer') mv.pivot.position.addScaledVector(mv.n, mv.k * mv.travel);
+    if (mv.m.slide) mv.pivot.position.addScaledVector(mv.n, -Math.max(0, mv.k * 2 - 1) * mv.m.slide);
   }
   // hinge arms: plate end stays on the cabinet, the other end follows the door's cup
   for (const a of arms){
@@ -420,9 +423,9 @@ for (const mv of movers){
   mv.covers = (mv.m.cover || []).map(k => movers[k]).filter(Boolean);
 }
 // bifold corner doors: the folding leaf rides on the swinging leaf's pivot
+for (const mv of movers) mv.kids = [];      // (a door can come before the one it hangs off)
 for (const mv of movers){
-  mv.kids = [];
-  const par = mv.m.parent !== undefined ? movers[mv.m.parent] : null;
+  const par = mv.m.parent !== undefined && mv.m.parent !== null ? movers[mv.m.parent] : null;
   if (!par) continue;
   mv.parentMv = par; par.kids.push(mv);
   mv.P = mv.P.clone().sub(par.P); par.pivot.add(mv.pivot); mv.pivot.position.copy(mv.P);
