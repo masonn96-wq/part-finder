@@ -36,6 +36,10 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 .specs{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:8px;padding-top:10px;border-top:1px dashed var(--line);font:500 13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
 .specs b{color:var(--fg);font-weight:600}
 .card.empty .tag{background:var(--line);color:var(--muted)}
+.card{position:relative;padding-right:52px}
+.card .cx{position:absolute;top:8px;right:8px;width:36px;height:36px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--muted);font:500 20px/1 var(--display);cursor:pointer}
+.card .cx:hover{color:var(--fg)}
+.card .cx:focus-visible{outline:2px solid var(--hi);outline-offset:2px}
 .sheet{position:absolute;left:12px;right:12px;bottom:12px;max-height:58%;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px 14px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:2;max-width:420px;margin-left:auto}
 .sheethead{display:flex;justify-content:space-between;align-items:center;position:sticky;top:-10px;background:var(--card);padding:6px 0 8px;font-size:16px}
 .sheethead button,.sheetbtns button{font:500 13px var(--display);padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
@@ -123,6 +127,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
   </section>
 </div>
 <div class="card empty" id="card">
+  <button type="button" class="cx" id="cardClose" aria-label="Hide this panel" title="Hide">&times;</button>
   <div class="tag"><i id="ptag" style="font-style:normal">ID</i><span id="pid">–</span></div>
   <div class="name" id="pname">Scan a part label</div>
   <div class="where" id="pwhere">Scan a sticker to light up its part, or tap a cabinet to see its size.</div>
@@ -443,6 +448,20 @@ $('count').textContent = byId.size + ' parts';
 let sel = null, view = 'cab', solid = true, iso = null, isoSolid = true, tipSel = null, dimsOn = false, dims = null;
 let selCab = null;
 let isoGs = new Set(), picking = false; const pickSet = new Set();   // isolated cabinets; cabinets being picked
+// bottom card: hidden while a cabinet is isolated or being picked, and when closed. Closing the empty
+// "Scan a part label" card is remembered on this device; a closed part / cabinet card comes back with
+// the next part or cabinet shown.
+let emptyClosed = false, infoClosed = false;
+try { emptyClosed = localStorage.getItem('pf-card-closed') === '1'; } catch (_) {}
+function cardEmpty(){ return $('card').classList.contains('empty') && !$('card').dataset.msg; }
+function updateCard(){
+  $('card').hidden = iso !== null || picking || (cardEmpty() ? emptyClosed : infoClosed);
+}
+$('cardClose').onclick = () => {
+  if (cardEmpty()){ emptyClosed = true; try { localStorage.setItem('pf-card-closed', '1'); } catch (_) {} }
+  else infoClosed = true;
+  updateCard();
+};
 try { dimsOn = localStorage.getItem('pf-dims') === '1'; } catch (_) {}
 
 function setLook(x, opacity, edgeColor, edgeOpacity, tint){
@@ -756,7 +775,7 @@ function reframe(){
 
 function show(x){
   sel = x || null; selCab = null; $('ptag').textContent = 'ID';
-  const card = $('card');
+  const card = $('card'); delete card.dataset.msg;
   if (!sel){
     card.classList.add('empty'); $('pid').textContent = '–';
     $('pname').textContent = 'Scan a part label';
@@ -772,8 +791,12 @@ function show(x){
     $('pspecs').innerHTML =
       '<span><b>' + Math.round(p.L) + ' × ' + Math.round(p.W) + (t ? ' × ' + t : '') + '</b> mm</span>' +
       '<span>' + esc(p.material || '') + '</span><span>' + esc(p.code) + '</span>';
+    infoClosed = false;
+    // a part is usually inside its cabinet (a shelf behind the doors): see-through view, so it shows
+    // through everything around it. The Solid button turns the solid view back on.
+    setSolid(false);
   }
-  paint(); reframe();
+  updateCard(); paint(); reframe();
 }
 // whole job: a tap picks a cabinet (never a single part) and shows its number, name and size
 function showCab(g){
@@ -781,20 +804,23 @@ function showCab(g){
   if (selCab === null){ show(null); return; }
   try { if (location.hash) history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
   const c = CABS[g] || {}, no = cabNoOf(g);
-  $('card').classList.remove('empty');
+  $('card').classList.remove('empty'); delete $('card').dataset.msg; infoClosed = false;
   $('ptag').textContent = 'CAB'; $('pid').textContent = no || '–';
   $('pname').textContent = c.n || 'Cabinet';
   $('pwhere').textContent = (TYPE_NAMES[c.t] || 'Cabinet').replace(/s( |$)/, '$1') + ' · double-tap to see it on its own';
   const n = parts.filter(x => x.p.g === g && x.p.id).length;
   $('pspecs').innerHTML = (c.whd ? '<span>W <b>' + fmt(c.whd[0]) + '</b> · H <b>' + fmt(c.whd[1]) + '</b> · D <b>' + fmt(c.whd[2]) + '</b> mm</span>' : '') +
     '<span>' + n + ' cut-list parts</span>';
-  paint();
+  updateCard(); paint();
 }
 
 function fromHash(){
   const h = (Q.get('p') || decodeURIComponent(location.hash.slice(1))).replace(/^p/i, '');
   show(h ? byId.get(h) : null);
-  if (h && !byId.has(h)){ $('pname').textContent = 'Part ' + h + ' is not in job ' + JOB.job; $('pwhere').textContent = 'Check the job number on the label.'; }
+  if (h && !byId.has(h)){
+    $('pname').textContent = 'Part ' + h + ' is not in job ' + JOB.job; $('pwhere').textContent = 'Check the job number on the label.';
+    $('card').dataset.msg = '1'; infoClosed = false; updateCard();
+  }
 }
 addEventListener('hashchange', fromHash);
 
@@ -802,8 +828,7 @@ function setView(v){ view = v; $('vCab').setAttribute('aria-pressed', v === 'cab
 function hintText(){
   $('hint').textContent = picking ? 'Tap cabinets to add or remove them, then press Isolate'
     : iso !== null ? 'Tap a part for its info (doors open too) · double-tap to go back'
-    : solid ? 'Tap a door or drawer to open it · tap a cabinet to select it · double-tap to isolate'
-    : 'Tap a cabinet to select it · double-tap to isolate it';
+    : 'Tap a door or drawer to open it · tap a cabinet to select it · double-tap to isolate';
 }
 function isolate(g){
   // g: one cabinet, a list of cabinets, or null for the whole job
@@ -836,7 +861,7 @@ function isolate(g){
 
   tipSel = null; $('tip').hidden = true; $('hint').hidden = false;
   buildDims();
-  $('card').hidden = on;
+  updateCard();
   hintText(); paint();
   if (!$('sheet').hidden) buildSheet();
   requestAnimationFrame(() => { resize(); reframe(); });
@@ -861,7 +886,8 @@ $('vNext').onclick = () => stepCab(1);
 $('vBack').onclick = () => { for (const mv of movers) mv.target = 0; isolate(null); };
 $('vCab').onclick = () => setView('cab');
 $('vJob').onclick = () => setView('job');
-$('vSolid').onclick = () => { solid = !solid; $('vSolid').setAttribute('aria-pressed', solid); hintText(); paint(); };
+function setSolid(v){ solid = v; $('vSolid').setAttribute('aria-pressed', solid); hintText(); paint(); }
+$('vSolid').onclick = () => setSolid(!solid);
 
 // tap: open a door/drawer (Solid or isolated) or pick a part; double-tap: isolate that cabinet
 const ray = new THREE.Raycaster(); let down = null, lastTap = null, tapTimer = null;
@@ -884,7 +910,7 @@ function singleTap(x){
     return;
   }
   if (!x){ if (selCab !== null) showCab(null); return; }
-  if (solid && x.mover && !x.mover.m.fixed){ toggleMover(x.mover); return; }
+  if (x.mover && !x.mover.m.fixed){ toggleMover(x.mover); return; }   // solid or see-through: doors open
   if (x.p.g !== undefined && x.p.g >= 0) showCab(selCab === x.p.g ? null : x.p.g);
 }
 renderer.domElement.addEventListener('pointerdown', e => down = [e.clientX, e.clientY]);
@@ -913,8 +939,8 @@ function updatePick(){
 function setPicking(on){
   picking = on; if (!on) pickSet.clear();
   $('vMulti').setAttribute('aria-pressed', on); $('vMulti').textContent = on ? 'Cancel' : 'Select cabs';
-  if (on){ $('card').hidden = true; for (const mv of movers) mv.target = 0; }
-  else if (iso === null) $('card').hidden = false;
+  if (on) for (const mv of movers) mv.target = 0;
+  updateCard();
   hintText(); updatePick();
 }
 $('vMulti').onclick = () => setPicking(!picking);
