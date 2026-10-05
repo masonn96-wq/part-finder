@@ -75,7 +75,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
     <button id="vGo" hidden>Isolate</button>
     <button id="vSee" aria-pressed="false" hidden title="See-through view">See-through</button>
     <button id="vExplode" aria-pressed="false" hidden>Explode</button>
-    <button id="vDims" aria-pressed="false" title="Show dimensions">Dims</button>
+    <button id="vDims" aria-pressed="false" hidden title="Show the cabinet's width, height and depth">Dims</button>
     <button id="vPrev" hidden title="Previous cabinet">&lsaquo; Prev</button>
     <button id="vNext" hidden title="Next cabinet">Next &rsaquo;</button>
     <button id="vBack" hidden>Back to job</button>
@@ -96,7 +96,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
   </section>
 </div>
 <div class="card empty" id="card">
-  <div class="tag">ID<span id="pid">–</span></div>
+  <div class="tag"><i id="ptag" style="font-style:normal">ID</i><span id="pid">–</span></div>
   <div class="name" id="pname">Scan a part label</div>
   <div class="where" id="pwhere">The part will light up in orange where it fits.</div>
   <div class="specs" id="pspecs"></div>
@@ -371,6 +371,7 @@ $('job').textContent = JOB.job;
 $('count').textContent = byId.size + ' parts';
 
 let sel = null, view = 'cab', pulse = 0, solid = true, iso = null, isoSolid = true, tipSel = null, dimsOn = false, dims = null;
+let selCab = null;
 let isoGs = new Set(), picking = false; const pickSet = new Set();   // isolated cabinets; cabinets being picked
 try { dimsOn = localStorage.getItem('pf-dims') === '1'; } catch (_) {}
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -400,7 +401,7 @@ function paint(){
     return;
   }
   for (const x of parts){
-    if (picking && pickSet.has(x.p.g)){ setLook(x, 1, hi, solid ? 0 : 1, null); for (const m of x.meshes) m.material.color.lerp(hi, .7); }
+    if ((picking && pickSet.has(x.p.g)) || (!picking && selCab !== null && x.p.g === selCab)){ setLook(x, 1, hi, solid ? 0 : 1, null); for (const m of x.meshes) m.material.color.lerp(hi, picking ? .7 : .45); }
     else if (solid) setLook(x, 1, x === sel ? hi : edge, x === sel ? 1 : 0, x === sel ? hi : null);   // solid: no outline lines
     else if (!sel) setLook(x, 1, edge, .35);
     else if (x === sel) setLook(x, 1, hi, 1, hi);
@@ -567,7 +568,7 @@ function row(label, sub, on, onChange){
   const id = 'tg' + Math.random().toString(36).slice(2, 8);
   const el = document.createElement('label'); el.className = 'tog'; el.htmlFor = id;
   el.innerHTML = '<input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '><span class="tl">' + esc(label) + '</span>' + (sub ? '<span class="ts">' + sub + '</span>' : '');
-  el.querySelector('input').addEventListener('change', e => { onChange(e.target.checked); applyVisibility(); if (iso === null && (dimsOn || planOn)) buildDims(); });
+  el.querySelector('input').addEventListener('change', e => { onChange(e.target.checked); applyVisibility(); if (iso === null && planOn) buildDims(); });
   return el;
 }
 function buildSheet(){
@@ -666,7 +667,12 @@ function reframe(){
   if (planOn && iso === null){ planFrame(); return; }
   if (iso !== null){
     const cab = parts.filter(x => isoGs.has(x.p.g));
-    const bx = boxOf(cab.concat(hardware.filter(h => isoGs.has(h.p.g))));
+    // frame the cabinet's own body: long shared parts it happens to own (a rangehood's 2.7 m underpanel)
+    // would otherwise shrink it to a speck
+    const longOk = x => { const c = CABS[x.p.g], W = c && c.whd ? Math.max(c.whd[0], c.whd[2]) : 0;
+      const s = x.box.getSize(new THREE.Vector3()); return !W || Math.max(s.x, s.z) <= W + 60; };
+    const core = cab.filter(longOk);
+    const bx = boxOf((core.length ? core : cab).concat(hardware.filter(h => isoGs.has(h.p.g) && longOk(h))));
     if (dims && dims.visible) bx.expandByScalar(220);       // leave room for the dimension lines and labels
     frame(bx, exTarget ? 1.5 : 0.85, cabFront(cab));
     return;
@@ -681,7 +687,7 @@ function reframe(){
 }
 
 function show(x){
-  sel = x || null;
+  sel = x || null; selCab = null; $('ptag').textContent = 'ID';
   const card = $('card');
   if (!sel){
     card.classList.add('empty'); $('pid').textContent = '–';
@@ -701,6 +707,21 @@ function show(x){
   }
   paint(); reframe();
 }
+// whole job: a tap picks a cabinet (never a single part) and shows its number, name and size
+function showCab(g){
+  selCab = g === undefined ? null : g; sel = null;
+  if (selCab === null){ show(null); return; }
+  try { if (location.hash) history.replaceState(null, '', location.pathname + location.search); } catch (_) {}
+  const c = CABS[g] || {}, no = cabNoOf(g);
+  $('card').classList.remove('empty');
+  $('ptag').textContent = 'CAB'; $('pid').textContent = no || '–';
+  $('pname').textContent = c.n || 'Cabinet';
+  $('pwhere').textContent = (TYPE_NAMES[c.t] || 'Cabinet').replace(/s( |$)/, '$1') + ' · double-tap to see it on its own';
+  const n = parts.filter(x => x.p.g === g && x.p.id).length;
+  $('pspecs').innerHTML = (c.whd ? '<span>W <b>' + fmt(c.whd[0]) + '</b> · H <b>' + fmt(c.whd[1]) + '</b> · D <b>' + fmt(c.whd[2]) + '</b> mm</span>' : '') +
+    '<span>' + n + ' cut-list parts</span>';
+  paint();
+}
 function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function fromHash(){
@@ -714,8 +735,8 @@ function setView(v){ view = v; $('vCab').setAttribute('aria-pressed', v === 'cab
 function hintText(){
   $('hint').textContent = picking ? 'Tap cabinets to add or remove them, then press Isolate'
     : iso !== null ? 'Tap a part for its info (doors open too) · double-tap to go back'
-    : solid ? 'Tap a door or drawer to open it · double-tap a cabinet to isolate it'
-    : 'Tap a panel · double-tap a cabinet to isolate it';
+    : solid ? 'Tap a door or drawer to open it · tap a cabinet to select it · double-tap to isolate'
+    : 'Tap a cabinet to select it · double-tap to isolate it';
 }
 function isolate(g){
   // g: one cabinet, a list of cabinets, or null for the whole job
@@ -744,7 +765,7 @@ function isolate(g){
   $('vExplode').hidden = !on; $('vBack').hidden = !on; $('vPrev').hidden = !on || gs.length > 1; $('vNext').hidden = !on || gs.length > 1;
   $('vMulti').hidden = on;
   $('vExplode').setAttribute('aria-pressed', false); $('vExplode').textContent = 'Explode';
-  $('vDims').hidden = false; $('vDims').setAttribute('aria-pressed', dimsOn);
+  $('vDims').hidden = !on; $('vDims').setAttribute('aria-pressed', dimsOn);
   $('vPlan').hidden = on;
   if (on && planOn){ planOn = false; $('vPlan').setAttribute('aria-pressed', false); controls.enableRotate = true; camera.fov = 35; camera.updateProjectionMatrix(); }
   tipSel = null; $('tip').hidden = true; $('hint').hidden = false;
@@ -796,9 +817,9 @@ function singleTap(x){
     if (x && parts.includes(x)) showTip(x); else if (!x) showTip(null);
     return;
   }
-  if (!x) return;
-  if ((solid || iso !== null) && x.mover){ toggleMover(x.mover); return; }
-  if (iso === null && x.p.id && parts.includes(x)){ try { history.replaceState(null, '', '#p' + x.p.id); } catch (_) {} show(x); }
+  if (!x){ if (selCab !== null) showCab(null); return; }
+  if (solid && x.mover){ toggleMover(x.mover); return; }
+  if (x.p.g !== undefined && x.p.g >= 0) showCab(selCab === x.p.g ? null : x.p.g);
 }
 renderer.domElement.addEventListener('pointerdown', e => down = [e.clientX, e.clientY]);
 renderer.domElement.addEventListener('pointerup', e => {
@@ -939,7 +960,7 @@ function chainOf(ivs, measured){
   return segs;
 }
 
-// ---- whole-job dimensions: shop-drawing chains per run (Dims = on the 3D view, Plan = from above) ----
+// ---- whole-job dimensions (Plan view): shop-drawing chains per run ----
 let planOn = false;
 const dimLabels = [];
 function runDims(group, pts, plan){
@@ -989,7 +1010,7 @@ function runDims(group, pts, plan){
     // no repeated rows: talls give identical base and upper rows; a one-piece row already is the overall
     const same = (x, y) => x.length === y.length && x.every((s, i) => Math.abs(s[0] - y[i][0]) < 3 && Math.abs(s[1] - y[i][1]) < 3);
     const tidy = list => { const out = []; for (const x of list) if (x.length && !out.some(y => same(x, y))) out.push(x); return out; };
-    if (plan){
+    {
       // rows in front of the run, like the plan sheet: bases, uppers, kicks, then the overall
       const rows = tidy([chainOf(r.rows.B), chainOf(r.rows.U), chainOf(r.rows.K, true), overall]);
       rows.forEach((segs, k) => chain(segs, s => P(s, F + sgn * off * (k + 1), topY), s => P(s, F, topY), k === rows.length - 1 ? 3 : null));
@@ -998,14 +1019,6 @@ function runDims(group, pts, plan){
       if (r.rows.B.length && r.depthB > 0) dep.push(r.depthB);
       if (r.rows.U.length && r.depthU > 0 && isFinite(r.depthU)) dep.push(r.depthU);
       dep.forEach((dv, k) => chain([[r.front - dv, r.front, Math.round(dv)]], s => P(r.u1 + off * (k + 1), s, topY), s => P(r.u1, s, topY), 2));
-    } else {
-      // on the 3D view: uppers chained above, bases and the overall below, heights up the right-hand end
-      const B = chainOf(r.rows.B), U = chainOf(r.rows.U);
-      if (U.length) chain(U, s => P(s, F, r.uTop + off), s => P(s, F, r.uTop), null);
-      const below = tidy([B.length ? B : chainOf(r.rows.K, true), overall]).filter(x => !(U.length && same(x, U) && x !== overall));
-      below.forEach((segs, k) => chain(segs, s => P(s, F, datum - off * (k + 1)), s => P(s, F, datum), k === below.length - 1 ? 3 : null));
-      const hs = []; for (let i = 0; i + 1 < r.ys.length; i++) hs.push([r.ys[i], r.ys[i + 1], Math.round(r.ys[i + 1] - r.ys[i])]);
-      chain(hs, y => P(r.u1 + off, F, y), y => P(r.u1, F, y), 2);
     }
   }
 }
@@ -1132,7 +1145,7 @@ function buildDims(){
   if (dims){ scene.remove(dims); dims.traverse(o => { if (o.geometry && !o.isSprite) o.geometry.dispose(); if (o.material){ if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); dims = null; }
   dimLabels.length = 0;
   if (iso === null){
-    if (!dimsOn && !planOn) return;
+    if (!planOn) return;                     // whole job: chains only in Plan
     const group = new THREE.Group(), pts = [];
     runDims(group, pts, planOn);
     const line = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
