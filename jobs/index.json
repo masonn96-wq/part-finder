@@ -1,6 +1,15 @@
 {
  "jobs": [
   {
+   "key": "j1081-61-howitt-laundry",
+   "name": "J1081 - 61 Howitt Laundry",
+   "number": "J1081",
+   "room": "Laundry",
+   "cabs": 10,
+   "parts": 54,
+   "updated": "2026-10-06 07:42"
+  },
+  {
    "key": "andy-joni-kitchen",
    "name": "Andy & Joni Kitchen",
    "number": "",
