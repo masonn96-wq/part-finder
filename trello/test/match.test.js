@@ -30,5 +30,11 @@ eq("two rooms, room not named -> ask", key("J974 - Bain", twoRooms), null);
 eq("two rooms -> both offered", M.match("J974 - Bain", twoRooms).candidates.length, 2);
 eq("two rooms reason", M.match("J974 - Bain", twoRooms).reason, "several-rooms");
 
+eq("resolve: pin wins over match", M.resolve("J974 - Bain", jobs, "andy-joni-kitchen").job.key, "andy-joni-kitchen");
+eq("resolve: missing pin falls back to match", M.resolve("J974 - Bain", jobs, "gone").job.key, "j974-cathy-john-bain");
+eq("resolve: missing pin is reported", M.resolve("J974 - Bain", jobs, "gone").pinMissing, true);
+eq("resolve: no pin, no match -> null", M.resolve("J279 - Testing", jobs, "").job, null);
+eq("real card name", key("J974 - Cathy & John Bain 10 Morris Rd Upper Beaconsfield - Kitchen"), "j974-cathy-john-bain");
+
 console.log(fail ? fail + " FAILED" : "all passed");
 process.exit(fail ? 1 : 0);
