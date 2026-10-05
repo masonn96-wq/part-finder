@@ -70,6 +70,8 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
     <button id="vCab" aria-pressed="true">Cabinet</button>
     <button id="vJob" aria-pressed="false">Whole job</button>
     <button id="vSolid" aria-pressed="true" title="Show everything solid">Solid</button>
+    <button id="vMulti" aria-pressed="false" title="Pick several cabinets to view together">Select cabs</button>
+    <button id="vGo" hidden>Isolate</button>
     <button id="vSee" aria-pressed="false" hidden title="See-through view">See-through</button>
     <button id="vExplode" aria-pressed="false" hidden>Explode</button>
     <button id="vDims" aria-pressed="false" hidden title="Show cabinet width, height and depth">Dims</button>
@@ -368,6 +370,7 @@ $('job').textContent = JOB.job;
 $('count').textContent = byId.size + ' parts';
 
 let sel = null, view = 'cab', pulse = 0, solid = true, iso = null, isoSolid = true, tipSel = null, dimsOn = false, dims = null;
+let isoGs = new Set(), picking = false; const pickSet = new Set();   // isolated cabinets; cabinets being picked
 try { dimsOn = localStorage.getItem('pf-dims') === '1'; } catch (_) {}
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -396,7 +399,8 @@ function paint(){
     return;
   }
   for (const x of parts){
-    if (solid) setLook(x, 1, x === sel ? hi : edge, x === sel ? 1 : 0, x === sel ? hi : null);   // solid: no outline lines
+    if (picking && pickSet.has(x.p.g)){ setLook(x, 1, hi, solid ? 0 : 1, null); for (const m of x.meshes) m.material.color.lerp(hi, .7); }
+    else if (solid) setLook(x, 1, x === sel ? hi : edge, x === sel ? 1 : 0, x === sel ? hi : null);   // solid: no outline lines
     else if (!sel) setLook(x, 1, edge, .35);
     else if (x === sel) setLook(x, 1, hi, 1, hi);
     else if (x.p.g === sel.p.g) setLook(x, .3, edge, .5);
@@ -532,14 +536,14 @@ CABS.forEach((c, g) => {
   const sp = badge(no); sp.position.copy(pos); scene.add(sp); labels.push({g, sp});
 });
 function updateLabels(){
-  for (const l of labels) l.sp.visible = iso !== null ? l.g === iso : showNums && !hiddenTypes.has(typeOf(l.g));
+  for (const l of labels) l.sp.visible = iso !== null ? isoGs.has(l.g) : showNums && !hiddenTypes.has(typeOf(l.g));
 }
 function applyVisibility(){
   for (const x of parts.concat(hardware)){
     const isHw = !parts.includes(x);
     const k = isHw ? (x.p.k || (x.p.g < 0 ? 'room' : 'hw')) : null;
     let on;
-    if (iso !== null) on = x.p.g === iso && k !== 'wall' && k !== 'room';
+    if (iso !== null) on = isoGs.has(x.p.g) && k !== 'wall' && k !== 'room';
     else if (k === 'wall') on = !hideWalls;
     else if (k === 'room') on = !hideRoom;
     else if (k === 'panel' && x.p.g < 0) on = !hiddenTypes.has('panel');
@@ -603,17 +607,17 @@ function buildSheet(){
     body.appendChild(row('Floor, windows & doors', '', !hideRoom, on => hideRoom = !on));
     body.appendChild(row('Hardware & appliances', '', !hideHardware, on => hideHardware = !on));
   } else {
-    const named = parts.find(x => x.p.g === iso && x.p.cabNo);
-    $('sheetTitle').textContent = 'Parts' + (cabNoOf(iso) ? ' · Cab ' + cabNoOf(iso) : '');
-    const list = parts.filter(x => x.p.g === iso).sort((a, b) => partLabel(a).localeCompare(partLabel(b)));
+    $('sheetTitle').textContent = 'Parts' + (isoGs.size > 1 ? ' · ' + isoGs.size + ' cabinets' : cabNoOf(iso) ? ' · Cab ' + cabNoOf(iso) : '');
+    const tagCab = x => isoGs.size > 1 && cabNoOf(x.p.g) ? '#' + cabNoOf(x.p.g) + ' ' : '';
+    const list = parts.filter(x => isoGs.has(x.p.g)).sort((a, b) => (parseInt(cabNoOf(a.p.g)) || 0) - (parseInt(cabNoOf(b.p.g)) || 0) || partLabel(a).localeCompare(partLabel(b)));
     const all = document.createElement('div'); all.className = 'sheetbtns';
     all.innerHTML = '<button type="button" id="showAll">Show all</button><button type="button" id="hideAll">Hide all</button>';
     body.appendChild(all);
     all.querySelector('#showAll').onclick = () => { list.forEach(x => hiddenParts.delete(x)); buildSheet(); applyVisibility(); };
     all.querySelector('#hideAll').onclick = () => { list.forEach(x => hiddenParts.add(x)); buildSheet(); applyVisibility(); };
     for (const x of list)
-      body.appendChild(row(partLabel(x), (x.p.id ? '<b>ID ' + esc(x.p.id) + '</b> · ' : '') + sizeOf(x), !hiddenParts.has(x), on => on ? hiddenParts.delete(x) : hiddenParts.add(x)));
-    const hw = hardware.filter(h => h.p.g === iso);
+      body.appendChild(row(tagCab(x) + partLabel(x), (x.p.id ? '<b>ID ' + esc(x.p.id) + '</b> · ' : '') + sizeOf(x), !hiddenParts.has(x), on => on ? hiddenParts.delete(x) : hiddenParts.add(x)));
+    const hw = hardware.filter(h => isoGs.has(h.p.g));
     if (hw.length) body.appendChild(row('Hardware', hw.length + ' items', !hw.every(h => hiddenParts.has(h)), on => hw.forEach(h => on ? hiddenParts.delete(h) : hiddenParts.add(h))));
   }
 }
@@ -659,8 +663,8 @@ function jobFront(){
 }
 function reframe(){
   if (iso !== null){
-    const cab = parts.filter(x => x.p.g === iso);
-    const bx = boxOf(cab.concat(hardware.filter(h => h.p.g === iso)));
+    const cab = parts.filter(x => isoGs.has(x.p.g));
+    const bx = boxOf(cab.concat(hardware.filter(h => isoGs.has(h.p.g))));
     if (dims && dims.visible) bx.expandByScalar(220);       // leave room for the dimension lines and labels
     frame(bx, exTarget ? 1.5 : 0.85, cabFront(cab));
     return;
@@ -706,22 +710,28 @@ addEventListener('hashchange', fromHash);
 
 function setView(v){ view = v; $('vCab').setAttribute('aria-pressed', v === 'cab'); $('vJob').setAttribute('aria-pressed', v === 'job'); reframe(); }
 function hintText(){
-  $('hint').textContent = iso !== null ? 'Tap a part for its info (doors open too) · double-tap to go back'
+  $('hint').textContent = picking ? 'Tap cabinets to add or remove them, then press Isolate'
+    : iso !== null ? 'Tap a part for its info (doors open too) · double-tap to go back'
     : solid ? 'Tap a door or drawer to open it · double-tap a cabinet to isolate it'
     : 'Tap a panel · double-tap a cabinet to isolate it';
 }
 function isolate(g){
-  iso = g; exTarget = 0; ex = 0; exDirty = true;
-  const items = parts.concat(hardware).filter(x => g !== null && x.p.g === g);
+  // g: one cabinet, a list of cabinets, or null for the whole job
+  const gs = g === null ? [] : Array.isArray(g) ? g : [g];
+  if (!gs.length) g = null;
+  isoGs = new Set(gs); iso = gs.length ? gs[0] : null; exTarget = 0; ex = 0; exDirty = true;
+  if (g !== null) setPicking(false);
+  const items = parts.concat(hardware).filter(x => isoGs.has(x.p.g));
   for (const x of parts.concat(hardware)) x.off = null;
   if (g !== null){
     const cc = boxOf(items).getCenter(new THREE.Vector3());
     // explode the cabinet's own parts only; appliances, hinges and other hardware stay put
     // (hardware on a door or drawer still travels with it)
     for (const x of items) x.off = parts.includes(x) ? x.box.getCenter(new THREE.Vector3()).sub(cc).multiplyScalar(0.9) : null;
-    const named = parts.find(x => x.p.g === g && x.p.cabNo);
-    const no = cabNoOf(g);
-    $('room').textContent = named ? 'Cab ' + named.p.cabNo + ' · ' + named.p.cabName : no ? 'Cab ' + no : 'Cabinet';
+    const named = parts.find(x => x.p.g === iso && x.p.cabNo);
+    const no = cabNoOf(iso);
+    const nos = gs.map(cabNoOf).filter(Boolean).sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0));
+    $('room').textContent = gs.length > 1 ? 'Cabs ' + (nos.length ? nos.join(', ') : gs.length) : named ? 'Cab ' + named.p.cabNo + ' · ' + named.p.cabName : no ? 'Cab ' + no : 'Cabinet';
   } else {
     const p = sel && sel.p; $('room').textContent = (p && p.room) || (parts.find(x => x.p.room) || {p:{}}).p.room || 'Room 1';
   }
@@ -729,7 +739,8 @@ function isolate(g){
   $('vCab').hidden = on; $('vJob').hidden = on; $('vSee').hidden = !on;
   isoSolid = true; $('vSee').setAttribute('aria-pressed', false);
   $('vSolid').hidden = on;
-  $('vExplode').hidden = !on; $('vBack').hidden = !on; $('vPrev').hidden = !on; $('vNext').hidden = !on;
+  $('vExplode').hidden = !on; $('vBack').hidden = !on; $('vPrev').hidden = !on || gs.length > 1; $('vNext').hidden = !on || gs.length > 1;
+  $('vMulti').hidden = on;
   $('vExplode').setAttribute('aria-pressed', false); $('vExplode').textContent = 'Explode';
   $('vDims').hidden = !on; $('vDims').setAttribute('aria-pressed', dimsOn);
   tipSel = null; $('tip').hidden = true; $('hint').hidden = false;
@@ -772,6 +783,10 @@ function pick(e){
   return hit ? all.find(q => q.meshes.includes(hit.object)) : null;
 }
 function singleTap(x){
+  if (picking){                             // picking cabinets: tap adds / removes the whole cabinet
+    if (x && x.p.g !== undefined && x.p.g >= 0){ pickSet.has(x.p.g) ? pickSet.delete(x.p.g) : pickSet.add(x.p.g); updatePick(); }
+    return;
+  }
   if (iso !== null){                        // isolated cabinet: tap shows the part's info (doors still open)
     if (x && x.mover) toggleMover(x.mover);
     if (x && parts.includes(x)) showTip(x); else if (!x) showTip(null);
@@ -787,6 +802,7 @@ renderer.domElement.addEventListener('pointerup', e => {
   const now = performance.now(), x = pick(e);
   if (lastTap && now - lastTap.t < 330 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30){
     clearTimeout(tapTimer); lastTap = null;
+    if (picking){ singleTap(x); return; }
     if (iso !== null){ for (const mv of movers) mv.target = 0; isolate(null); }
     else if (x && x.p.g !== undefined && x.p.g >= 0) isolate(x.p.g);
     return;
@@ -795,6 +811,23 @@ renderer.domElement.addEventListener('pointerup', e => {
   clearTimeout(tapTimer); tapTimer = setTimeout(() => singleTap(x), 260);
 });
 renderer.domElement.addEventListener('dblclick', e => e.preventDefault());
+
+// ---- pick several cabinets and isolate them together ----
+function updatePick(){
+  $('vGo').hidden = !picking;
+  $('vGo').disabled = !pickSet.size;
+  $('vGo').textContent = 'Isolate' + (pickSet.size ? ' (' + pickSet.size + ')' : '');
+  paint();
+}
+function setPicking(on){
+  picking = on; if (!on) pickSet.clear();
+  $('vMulti').setAttribute('aria-pressed', on); $('vMulti').textContent = on ? 'Cancel' : 'Select cabs';
+  if (on){ $('card').hidden = true; for (const mv of movers) mv.target = 0; }
+  else if (iso === null) $('card').hidden = false;
+  hintText(); updatePick();
+}
+$('vMulti').onclick = () => setPicking(!picking);
+$('vGo').onclick = () => { if (pickSet.size) isolate([...pickSet]); };
 
 // ---- part info card (isolated view) ----
 function edgeText(code){
@@ -843,7 +876,25 @@ function fmt(v){ return (Math.round(v * 10) / 10).toString(); }
 function buildDims(){
   if (dims){ scene.remove(dims); dims.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material){ if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); dims = null; }
   if (iso === null || !dimsOn) return;
-  const cab = parts.filter(x => x.p.g === iso); if (!cab.length) return;
+  const group = new THREE.Group(), pts = [];
+  // several cabinets: every width, but height and depth only once, on the right-most cabinet
+  const gs = [...isoGs].filter(g => parts.some(x => x.p.g === g));
+  let last = gs[0], best = -Infinity;
+  if (gs.length > 1){
+    const f0 = new THREE.Vector3(); for (const m of movers) if (!m.m.inner && isoGs.has(parts[m.m.f] && parts[m.m.f].p.g)) f0.add(m.n);
+    f0.y = 0; if (f0.length() < 0.1) f0.set(0, 0, 1); f0.normalize();
+    const r0 = new THREE.Vector3(0, 1, 0).cross(f0);
+    for (const g of gs){ const c = boxOf(parts.filter(x => x.p.g === g)); const v = Math.max(c.min.dot(r0), c.max.dot(r0)) + c.max.y * 1e-3; if (v > best){ best = v; last = g; } }
+  }
+  for (const g of gs) dimsFor(g, group, pts, g === last);
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({color: new THREE.Color(css('--fg')), depthTest: false, transparent: true}));
+  line.renderOrder = 21; group.add(line);
+  group.visible = !exTarget;
+  dims = group; scene.add(group);
+}
+function dimsFor(gid, group, pts, sideDims){
+  const cab = parts.filter(x => x.p.g === gid); if (!cab.length) return;
   const B = boxOf(cab), lo = B.min, hi = B.max;
   // front: the way the doors/drawers face (else the long side of the box)
   const f = new THREE.Vector3(); for (const m of new Set(cab.map(x => x.mover).filter(Boolean))) if (!m.m.inner) f.add(m.n);
@@ -856,18 +907,19 @@ function buildDims(){
   // keep the height/depth on the viewer's right of the front
   const right = new THREE.Vector3(0, 0, 0); right[a] = s; right.cross(new THREE.Vector3(0, 1, 0)).negate();
   const sideSign = right[b] >= 0 ? 1 : -1, side = sideSign > 0 ? hi[b] : lo[b];
-  const whd = (CABS[iso] && CABS[iso].whd) || null;
+  const whd = (CABS[gid] && CABS[gid].whd) || null;
   const W = whd ? whd[0] : size[b], H = whd ? whd[1] : size.y, D = whd ? whd[2] : size[a];
   const off = Math.max(70, Math.min(160, Math.max(size.x, size.y, size.z) * 0.08)), ext = 25;
-  const pts = [];
   const P = (pa, pb, py) => { const v = new THREE.Vector3(); v[a] = pa; v[b] = pb; v.y = py; return v; };
   const seg = (u, v) => pts.push(u, v);
-  const group = new THREE.Group();
   // width: above the top, along the front
   const yW = hi.y + off;
   seg(P(front, lo[b], hi.y + 10), P(front, lo[b], yW + ext)); seg(P(front, hi[b], hi.y + 10), P(front, hi[b], yW + ext));
   seg(P(front, lo[b], yW), P(front, hi[b], yW));
   const lw = dimLabel(fmt(W)); lw.position.copy(P(front, (lo[b] + hi[b]) / 2, yW)); group.add(lw);
+  const slash = (v, axis) => { const u = v.clone(), w = v.clone(); u[axis] -= 12; u.y -= 12; w[axis] += 12; w.y += 12; seg(u, w); };
+  slash(P(front, lo[b], yW), b); slash(P(front, hi[b], yW), b);
+  if (!sideDims) return;
   // height: beside the cabinet, at the front
   const bH = side + sideSign * off;
   seg(P(front, side + sideSign * 10, lo.y), P(front, bH + sideSign * ext, lo.y)); seg(P(front, side + sideSign * 10, hi.y), P(front, bH + sideSign * ext, hi.y));
@@ -879,16 +931,8 @@ function buildDims(){
   seg(P(front, side, hi.y + 10), P(front, side, yD + ext));
   seg(P(back, side, yD), P(front, side, yD));
   const ld = dimLabel(fmt(D)); ld.position.copy(P((front + back) / 2, side, yD)); group.add(ld);
-  // end ticks (small diagonal slashes like a drawing)
-  const slash = (v, axis) => { const u = v.clone(), w = v.clone(); u[axis] -= 12; u.y -= 12; w[axis] += 12; w.y += 12; seg(u, w); };
-  slash(P(front, lo[b], yW), b); slash(P(front, hi[b], yW), b);
   { const u = P(front, bH, lo.y), v = P(front, bH, hi.y); for (const q of [u, v]){ const m = q.clone(), n = q.clone(); m[b] -= 12; m.y -= 12; n[b] += 12; n.y += 12; seg(m, n); } }
   slash(P(back, side, yD), a); slash(P(front, side, yD), a);
-  const geo = new THREE.BufferGeometry().setFromPoints(pts);
-  const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({color: new THREE.Color(css('--fg')), depthTest: false, transparent: true}));
-  line.renderOrder = 21; group.add(line);
-  group.visible = !exTarget;
-  dims = group; scene.add(group);
 }
 $('vDims').onclick = () => { dimsOn = !dimsOn; $('vDims').setAttribute('aria-pressed', dimsOn);
   try { localStorage.setItem('pf-dims', dimsOn ? '1' : '0'); } catch (_) {} buildDims(); reframe(); };
