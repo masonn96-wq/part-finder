@@ -52,6 +52,14 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 .tog .ts{font:500 12px var(--mono);color:var(--muted);white-space:nowrap}
 .tog .ts b{color:var(--fg)}
 .hint{position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--muted);letter-spacing:.04em}
+.tip{position:absolute;left:12px;right:12px;bottom:12px;max-width:420px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:1;display:grid;grid-template-columns:auto 1fr auto;gap:2px 12px;align-items:center}
+.tip .tag{grid-row:span 2;padding:6px 8px}
+.tip .tag span{font-size:20px}
+.tip .name{font-size:19px}
+.tip .where{font-size:13px}
+.tip .x{grid-row:span 2;align-self:start;font:500 13px var(--display);padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+.tip .specs{grid-column:1/-1;margin-top:6px;padding-top:8px}
+.tip .note{grid-column:1/-1;margin-top:6px;padding:6px 8px;border-radius:6px;background:var(--bg);font-size:14px;font-weight:600;border-left:3px solid var(--hi)}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 
@@ -64,10 +72,21 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
     <button id="vSolid" aria-pressed="true" title="Show everything solid">Solid</button>
     <button id="vSee" aria-pressed="false" hidden title="See-through view">See-through</button>
     <button id="vExplode" aria-pressed="false" hidden>Explode</button>
+    <button id="vDims" aria-pressed="false" hidden title="Show cabinet width, height and depth">Dims</button>
+    <button id="vPrev" hidden title="Previous cabinet">&lsaquo; Prev</button>
+    <button id="vNext" hidden title="Next cabinet">Next &rsaquo;</button>
     <button id="vBack" hidden>Back to job</button>
     <button id="vLayers" aria-pressed="false" title="Show or hide cabinets, materials and parts">Show / hide</button>
   </div>
   <div class="hint" id="hint"></div>
+  <section class="tip" id="tip" hidden aria-live="polite">
+    <div class="tag">ID<span id="tid">–</span></div>
+    <div class="name" id="tname"></div>
+    <button type="button" class="x" id="tclose" aria-label="Close part info">Close</button>
+    <div class="where" id="twhere"></div>
+    <div class="specs" id="tspecs"></div>
+    <div class="note" id="tnote" hidden></div>
+  </section>
   <section class="sheet" id="sheet" hidden aria-label="Show or hide">
     <div class="sheethead"><b id="sheetTitle">Show / hide</b><button type="button" id="sheetClose" aria-label="Close">Done</button></div>
     <div id="sheetBody"></div>
@@ -85,13 +104,18 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 <script>
 const Q = new URLSearchParams(location.search);
 const RAWJ = (Q.get('j') || '').trim();
-// Job names start with the job number (e.g. "J1093 - 62 Smith St - Kitchen"); only that number is used,
-// so addresses never end up in file names. Falls back to the whole name if there's no number.
-// job key: the J number anywhere in the job name (J1100), otherwise the whole job name
+// Each CV job has its own page, keyed by its full job name ("J1093 - 62 Florizel St - Kitchen" ->
+// j1093-62-florizel-st-kitchen), so separate CV jobs under one J number never overwrite each other.
+// Older pages were keyed by the J number only, so that is tried second.
+const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 const NUM = RAWJ.match(/(?:^|[^A-Za-z0-9])(J\d{3,})(?!\d)/i);
-const KEY = (NUM ? NUM[1] : RAWJ).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-fetch('jobs/' + encodeURIComponent(KEY) + '.json').then(r => { if (!r.ok) throw 0; return r.json(); })
-  .then(start).catch(() => { document.getElementById('pname').textContent = 'Job not found'; document.getElementById('pwhere').textContent = 'Rescan the label, or check the job has been uploaded.'; });
+const KEYS = [...new Set([slug(RAWJ), NUM ? slug(NUM[1]) : ''].filter(Boolean))];
+(async () => {
+  for (const k of KEYS){
+    try { const r = await fetch('jobs/' + encodeURIComponent(k) + '.json'); if (r.ok) return start(await r.json()); } catch (_) {}
+  }
+  document.getElementById('pname').textContent = 'Job not found'; document.getElementById('pwhere').textContent = 'Rescan the label, or check the job has been uploaded.';
+})();
 function start(JOB){
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -112,17 +136,33 @@ controls.rotateSpeed = 0.55;
 controls.zoomSpeed = 0.6;
 controls.panSpeed = 0.6;
 controls.screenSpacePanning = true;
-scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8178, 0.75));
-const sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(1500, 3000, 2500); scene.add(sun);
+// light mostly comes from the viewer (a lamp on the camera), so the faces you look at are the brightest and
+// thin edges / route bevels turned toward a fixed sun don't glow white
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8178, 0.5));
+const sun = new THREE.DirectionalLight(0xffffff, 0.15); sun.position.set(1500, 3000, 2500); scene.add(sun);
+const headlamp = new THREE.DirectionalLight(0xffffff, 0.6); headlamp.position.set(0.3, 0.5, 1);
+camera.add(headlamp); headlamp.target.position.set(0, 0, -1); camera.add(headlamp.target); scene.add(camera);
 
 // ---- materials (v2 files carry real CV materials + textures; v1 files get plain board colour) ----
 const loader = new THREE.TextureLoader();
-const texCache = {}, texUsers = {};
+const texCache = {}, texUsers = {}, texVariants = {};
+// One GPU texture per image (plus one per different repeat). Cloning per mesh uploaded the same image
+// hundreds of times - fine on a PC, but it ran phones out of graphics memory and crashed the page.
+function textureAt(file, rx, ry){
+  const base = texture(file);
+  if (Math.abs(rx - 1) < 1e-6 && Math.abs(ry - 1) < 1e-6) return base;
+  const key = file + '|' + rx.toFixed(5) + '|' + ry.toFixed(5);
+  if (!texCache[key]){
+    const v = base.clone(); v.repeat.set(rx, ry); v.needsUpdate = true;
+    (texVariants[file] = texVariants[file] || []).push(v); texCache[key] = v;
+  }
+  return texCache[key];
+}
 function texture(file){
   if (!texCache[file]){
     texUsers[file] = [];
     const t = loader.load('textures/' + encodeURIComponent(file),
-      img => texUsers[file].forEach(m => { if (m.map){ m.map.image = t.image; m.map.needsUpdate = true; } m.needsUpdate = true; }),
+      img => { (texVariants[file] || []).forEach(v => { v.image = t.image; v.needsUpdate = true; }); texUsers[file].forEach(m => { m.needsUpdate = true; }); },
       undefined,
       () => texUsers[file].forEach(m => { m.map = null; m.color.copy(m.userData.fallback); m.userData.base.copy(m.userData.fallback); m.needsUpdate = true; }));
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
@@ -136,9 +176,8 @@ function realMaterial(mi){
   const d = MATS[mi];
   const mat = new THREE.MeshLambertMaterial({side:THREE.DoubleSide, transparent:true, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1});
   if (d && d.t){
-    const base = texture(d.t);
-    const t = base.clone();                                   // own repeat per material, same image
-    if (!(JOB.v >= 2)) t.repeat.set(1 / (d.s[0] || 24), 1 / (d.s[1] || 24));   // v2 UVs are already in real-size repeats
+    // v2 UVs are already in real-size repeats; v1 needs the material's tile size
+    const t = JOB.v >= 2 ? textureAt(d.t, 1, 1) : textureAt(d.t, 1 / (d.s[0] || 24), 1 / (d.s[1] || 24));
     mat.map = t; mat.color.set(0xffffff);
     mat.userData.fallback = d.c.clone();
     texUsers[d.t].push(mat);
@@ -252,14 +291,39 @@ function moveStep(){
     mv.pivot.position.copy(mv.P).addScaledVector(off, ex);
     if (mv.m.t === 'drawer') mv.pivot.position.addScaledVector(mv.n, mv.k * mv.travel);
   }
+  // hinge arms: plate end stays on the cabinet, the other end follows the door's cup
+  for (const a of arms){
+    if (!a.mv.moved && !a.first) continue;
+    a.first = false;
+    const cupNow = a.cup.clone().sub(a.mv.P).applyQuaternion(a.mv.pivot.quaternion).add(a.mv.P);
+    const dir = cupNow.sub(a.plate); const len = dir.length(); if (len < 1) continue;
+    a.pivot.quaternion.setFromUnitVectors(a.dir0, dir.normalize());
+    a.pivot.scale.set(1, 1, 1); a.pivot.scale[a.ax] = Math.max(0.6, Math.min(1.8, len / a.len0));   // arm spans plate to cup
+  }
   if (exDirty){
     for (const x of parts.concat(hardware)){
-      if (x.mover) continue;
+      if (x.mover || x.arm) continue;
       const off = x.off || ZERO;
       for (const ob of x.meshes.concat(x.edges)) ob.position.copy(off).multiplyScalar(ex);
     }
     exDirty = false;
   }
+}
+const arms = [];
+for (const mv of movers) for (const pair of (mv.m.arms || [])){
+  const [k, cupK] = Array.isArray(pair) ? pair : [pair, -1];
+  const h = hardware[k]; if (!h) continue;
+  const size = h.box.getSize(new THREE.Vector3()), c = h.box.getCenter(new THREE.Vector3());
+  const ax = size.x >= size.y && size.x >= size.z ? 'x' : size.y >= size.z ? 'y' : 'z';
+  const e1 = c.clone(), e2 = c.clone(); e1[ax] -= size[ax] / 2; e2[ax] += size[ax] / 2;
+  // the arm's cabinet end stays put; its other end reaches for the hinge cup on the door
+  const target = cupK >= 0 && hardware[cupK] ? hardware[cupK].box.getCenter(new THREE.Vector3()) : parts[mv.m.f].box.getCenter(new THREE.Vector3());
+  const cup = e1.distanceTo(target) < e2.distanceTo(target) ? e1 : e2, plate = cup === e1 ? e2 : e1;
+  const reach = cupK >= 0 && hardware[cupK] ? target : cup;
+  const pivot = new THREE.Object3D(); pivot.position.copy(plate); scene.add(pivot);
+  for (const ob of h.meshes.concat(h.edges)){ scene.remove(ob); ob.position.sub(plate); pivot.add(ob); }
+  const a = {mv, h, pivot, plate, cup: reach, dir0: cup.clone().sub(plate).normalize(), len0: cup.distanceTo(plate), ax, first: true};
+  h.arm = a; arms.push(a);
 }
 for (const mv of movers){
   mv.front = parts[mv.m.f]; mv.inners = [];
@@ -290,7 +354,8 @@ function toggleMover(mv){
 $('job').textContent = JOB.job;
 $('count').textContent = byId.size + ' parts';
 
-let sel = null, view = 'cab', pulse = 0, solid = true, iso = null, isoSolid = true;
+let sel = null, view = 'cab', pulse = 0, solid = true, iso = null, isoSolid = true, tipSel = null, dimsOn = false, dims = null;
+try { dimsOn = localStorage.getItem('pf-dims') === '1'; } catch (_) {}
 const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function setLook(x, opacity, edgeColor, edgeOpacity, tint){
@@ -301,7 +366,7 @@ function setLook(x, opacity, edgeColor, edgeOpacity, tint){
     mat.emissive.copy(tint || new THREE.Color(0)); mat.userData.glow = !!tint;
     m.renderOrder = opacity > .9 ? 2 : 1;
   }
-  for (const e of x.edges){ e.material.color.copy(edgeColor); e.material.opacity = edgeOpacity; }
+  for (const e of x.edges){ e.material.color.copy(edgeColor); e.material.opacity = edgeOpacity; e.material.visible = edgeOpacity > 0; }
 }
 function paint(){
   const c = n => new THREE.Color(css(n));
@@ -310,15 +375,15 @@ function paint(){
   applyVisibility();
   if (iso !== null){                       // isolated cabinet: solid, or see-through wireframe
     for (const x of parts){
-      if (x === sel) setLook(x, 1, hi, 1, hi);
-      else if (isoSolid) setLook(x, 1, edge, .2);
+      if (x === sel || x === tipSel) setLook(x, 1, hi, 1, hi);
+      else if (isoSolid) setLook(x, 1, edge, 0);
       else setLook(x, .18, edge, .85);
     }
-    for (const h of hardware) if (h.p.k !== 'wall') isoSolid ? setLook(h, 1, edge, .2) : setLook(h, .15, edge, .6);
+    for (const h of hardware) if (h.p.k !== 'wall') isoSolid ? setLook(h, 1, edge, 0) : setLook(h, .15, edge, .6);
     return;
   }
   for (const x of parts){
-    if (solid) setLook(x, 1, x === sel ? hi : edge, x === sel ? 1 : .12, x === sel ? hi : null);
+    if (solid) setLook(x, 1, x === sel ? hi : edge, x === sel ? 1 : 0, x === sel ? hi : null);   // solid: no outline lines
     else if (!sel) setLook(x, 1, edge, .35);
     else if (x === sel) setLook(x, 1, hi, 1, hi);
     else if (x.p.g === sel.p.g) setLook(x, .3, edge, .5);
@@ -327,7 +392,7 @@ function paint(){
   for (const h of hardware){
     if (h.p.k === 'wall'){ for (const m of h.meshes) m.material.opacity = h.fade; continue; }
     const near = sel && h.p.g === sel.p.g;
-    if (solid) setLook(h, 1, edge, .12);
+    if (solid) setLook(h, 1, edge, 0);
     else setLook(h, !sel ? 1 : near ? .3 : .05, edge, !sel ? .35 : near ? .4 : .05);
   }
 }
@@ -386,9 +451,8 @@ function applyFinish(label, choice){
     if (!choice){ mat.map = ud.orig.map; ud.base.copy(ud.orig.base); }
     else if (choice.startsWith('tex:')){
       const src = MATS[m.userData.mi], d = MATS[+choice.slice(4)];
-      const t = texture(d.t).clone(); t.needsUpdate = true;
       const sx = (src && src.t ? src.s[0] : 24) / (d.s[0] || 24), sy = (src && src.t ? src.s[1] : 24) / (d.s[1] || 24);
-      t.repeat.set(JOB.v >= 2 ? sx : 1 / (d.s[0] || 24), JOB.v >= 2 ? sy : 1 / (d.s[1] || 24));
+      const t = JOB.v >= 2 ? textureAt(d.t, sx, sy) : textureAt(d.t, 1 / (d.s[0] || 24), 1 / (d.s[1] || 24));
       mat.map = t; texUsers[d.t].push(mat); ud.base.set(0xffffff);
     } else { mat.map = null; ud.base.set(choice); }
     mat.color.copy(ud.base); mat.needsUpdate = true;
@@ -572,13 +636,23 @@ function cabFront(cab){
   if (dir.length() > 0.1){ const ctr = boxOf(cab).getCenter(new THREE.Vector3()); const p = ctr.clone().addScaledVector(dir.normalize(), 1000); p.y = c.y; return p; }
   return c;
 }
+// the side of the job the doors and drawers face, so the whole-job view opens on the kitchen's face
+function jobFront(){
+  const n = new THREE.Vector3();
+  for (const mv of movers) if (!mv.m.inner && !mv.parentMv) n.add(mv.n);
+  n.y = 0; if (n.length() < 0.1) return null;
+  const c = boxOf(parts).getCenter(new THREE.Vector3());
+  return c.addScaledVector(n.normalize(), 1000);
+}
 function reframe(){
   if (iso !== null){
     const cab = parts.filter(x => x.p.g === iso);
-    frame(boxOf(cab.concat(hardware.filter(h => h.p.g === iso))), exTarget ? 1.5 : 0.85, cabFront(cab));
+    const bx = boxOf(cab.concat(hardware.filter(h => h.p.g === iso)));
+    if (dims && dims.visible) bx.expandByScalar(220);       // leave room for the dimension lines and labels
+    frame(bx, exTarget ? 1.5 : 0.85, cabFront(cab));
     return;
   }
-  if (view === 'job' || !sel) frame(boxOf(parts));
+  if (view === 'job' || !sel) frame(boxOf(parts), 1.02, jobFront());
   else {
     const cab = parts.filter(x => x.p.g === sel.p.g);
     const fronts = cab.filter(x => /DSLAB|DOOR|DF/i.test(x.p.code || ''));
@@ -619,7 +693,7 @@ addEventListener('hashchange', fromHash);
 
 function setView(v){ view = v; $('vCab').setAttribute('aria-pressed', v === 'cab'); $('vJob').setAttribute('aria-pressed', v === 'job'); reframe(); }
 function hintText(){
-  $('hint').textContent = iso !== null ? 'Tap a door or drawer to open it · double-tap to go back'
+  $('hint').textContent = iso !== null ? 'Tap a part for its info (doors open too) · double-tap to go back'
     : solid ? 'Tap a door or drawer to open it · double-tap a cabinet to isolate it'
     : 'Tap a panel · double-tap a cabinet to isolate it';
 }
@@ -629,7 +703,9 @@ function isolate(g){
   for (const x of parts.concat(hardware)) x.off = null;
   if (g !== null){
     const cc = boxOf(items).getCenter(new THREE.Vector3());
-    for (const x of items) x.off = x.box.getCenter(new THREE.Vector3()).sub(cc).multiplyScalar(0.9);
+    // explode the cabinet's own parts only; appliances, hinges and other hardware stay put
+    // (hardware on a door or drawer still travels with it)
+    for (const x of items) x.off = parts.includes(x) ? x.box.getCenter(new THREE.Vector3()).sub(cc).multiplyScalar(0.9) : null;
     const named = parts.find(x => x.p.g === g && x.p.cabNo);
     const no = cabNoOf(g);
     $('room').textContent = named ? 'Cab ' + named.p.cabNo + ' · ' + named.p.cabName : no ? 'Cab ' + no : 'Cabinet';
@@ -640,16 +716,33 @@ function isolate(g){
   $('vCab').hidden = on; $('vJob').hidden = on; $('vSee').hidden = !on;
   isoSolid = true; $('vSee').setAttribute('aria-pressed', false);
   $('vSolid').hidden = on;
-  $('vExplode').hidden = !on; $('vBack').hidden = !on;
+  $('vExplode').hidden = !on; $('vBack').hidden = !on; $('vPrev').hidden = !on; $('vNext').hidden = !on;
   $('vExplode').setAttribute('aria-pressed', false); $('vExplode').textContent = 'Explode';
+  $('vDims').hidden = !on; $('vDims').setAttribute('aria-pressed', dimsOn);
+  tipSel = null; $('tip').hidden = true; $('hint').hidden = false;
+  buildDims();
   $('card').hidden = on;
   hintText(); paint();
   if (!$('sheet').hidden) buildSheet();
   requestAnimationFrame(() => { resize(); reframe(); });
 }
 $('vExplode').onclick = () => { exTarget = exTarget ? 0 : 1; $('vExplode').setAttribute('aria-pressed', !!exTarget);
-  $('vExplode').textContent = exTarget ? 'Put back' : 'Explode'; reframe(); };
+  $('vExplode').textContent = exTarget ? 'Put back' : 'Explode'; if (dims) dims.visible = !exTarget; reframe(); };
 $('vSee').onclick = () => { isoSolid = !isoSolid; $('vSee').setAttribute('aria-pressed', !isoSolid); paint(); };
+// step through cabinets in cabinet-number order (cabinets with no number follow, in model order)
+function cabOrder(){
+  const gs = [...new Set(parts.map(x => x.p.g))].filter(g => g >= 0);
+  const num = g => { const n = parseInt(cabNoOf(g), 10); return isNaN(n) ? 1e9 + g : n; };
+  return gs.sort((a, b) => num(a) - num(b));
+}
+function stepCab(d){
+  if (iso === null) return;
+  const order = cabOrder(), i = order.indexOf(iso);
+  for (const mv of movers) mv.target = 0;
+  isolate(order[(i + d + order.length) % order.length]);
+}
+$('vPrev').onclick = () => stepCab(-1);
+$('vNext').onclick = () => stepCab(1);
 $('vBack').onclick = () => { for (const mv of movers) mv.target = 0; isolate(null); };
 $('vCab').onclick = () => setView('cab');
 $('vJob').onclick = () => setView('job');
@@ -666,6 +759,11 @@ function pick(e){
   return hit ? all.find(q => q.meshes.includes(hit.object)) : null;
 }
 function singleTap(x){
+  if (iso !== null){                        // isolated cabinet: tap shows the part's info (doors still open)
+    if (x && x.mover) toggleMover(x.mover);
+    if (x && parts.includes(x)) showTip(x); else if (!x) showTip(null);
+    return;
+  }
   if (!x) return;
   if ((solid || iso !== null) && x.mover){ toggleMover(x.mover); return; }
   if (iso === null && x.p.id && parts.includes(x)){ try { history.replaceState(null, '', '#p' + x.p.id); } catch (_) {} show(x); }
@@ -684,6 +782,103 @@ renderer.domElement.addEventListener('pointerup', e => {
   clearTimeout(tapTimer); tapTimer = setTimeout(() => singleTap(x), 260);
 });
 renderer.domElement.addEventListener('dblclick', e => e.preventDefault());
+
+// ---- part info card (isolated view) ----
+function edgeText(code){
+  const m = String(code || '').match(/^(\d+)([A-Z]*)$/i);
+  if (!m) return '';
+  const n = m[2].split('').filter(c => c.toUpperCase() !== 'N').length;
+  return (n ? n + ' of ' + m[1] + ' edges taped' : 'No edge tape') + ' (' + code + ')';
+}
+function showTip(x){
+  tipSel = x || null;
+  if (!x){ $('tip').hidden = true; $('hint').hidden = false; paint(); return; }
+  const p = x.p;
+  $('tid').textContent = p.id || '–';
+  $('tname').textContent = partLabel(x);
+  const no = p.cabNo || cabNoOf(p.g);
+  $('twhere').textContent = (no ? 'Cab ' + no : 'Cabinet') + (p.cabName ? ' · ' + p.cabName : '') + (p.id ? '' : ' · not on the cut list');
+  const t = Number.isFinite(p.thick) ? Math.round(p.thick) : '';
+  const size = p.id ? Math.round(p.L) + ' × ' + Math.round(p.W) + (t ? ' × ' + t : '') : sizeOf(x);
+  const bits = ['<span><b>' + size + '</b> mm</span>'];
+  if (p.id) bits.push('<span>L ' + Math.round(p.L) + ' · W ' + Math.round(p.W) + ' (grain)</span>');
+  const mat = p.material || (x.meshes[0] && matName(x.meshes[0].userData.mi)) || '';
+  if (mat) bits.push('<span>' + esc(mat) + '</span>');
+  if (p.code) bits.push('<span>' + esc(p.code) + '</span>');
+  if (p.edges) bits.push('<span>' + esc(edgeText(p.edges)) + '</span>');
+  $('tspecs').innerHTML = bits.join('');
+  $('tnote').hidden = !p.comment; $('tnote').textContent = p.comment || '';
+  $('tip').hidden = false; $('hint').hidden = true;
+  paint();
+}
+$('tclose').onclick = () => showTip(null);
+
+// ---- dimensions: cabinet width above, height and depth on the side (CV's cabinet sizes) ----
+function dimLabel(text){
+  const c = document.createElement('canvas'); c.width = 256; c.height = 96;
+  const g = c.getContext('2d');
+  g.fillStyle = '#ffffff'; g.strokeStyle = '#1f2328'; g.lineWidth = 5;
+  g.beginPath(); g.roundRect ? g.roundRect(8, 14, 240, 68, 14) : g.rect(8, 14, 240, 68); g.fill(); g.stroke();
+  g.fillStyle = '#1f2328'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = '700 48px system-ui, sans-serif'; g.fillText(text, 128, 50);
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map: t, depthTest: false, depthWrite: false, sizeAttenuation: false, transparent: true}));
+  sp.scale.set(0.075, 0.028, 1); sp.renderOrder = 22;
+  return sp;
+}
+function fmt(v){ return (Math.round(v * 10) / 10).toString(); }
+function buildDims(){
+  if (dims){ scene.remove(dims); dims.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material){ if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); dims = null; }
+  if (iso === null || !dimsOn) return;
+  const cab = parts.filter(x => x.p.g === iso); if (!cab.length) return;
+  const B = boxOf(cab), lo = B.min, hi = B.max;
+  // front: the way the doors/drawers face (else the long side of the box)
+  const f = new THREE.Vector3(); for (const m of new Set(cab.map(x => x.mover).filter(Boolean))) if (!m.m.inner) f.add(m.n);
+  f.y = 0;
+  const size = B.getSize(new THREE.Vector3());
+  let a = Math.abs(f.x) > Math.abs(f.z) ? 'x' : 'z';
+  if (f.length() < 0.1) a = size.x > size.z ? 'z' : 'x';
+  const s = f[a] < 0 ? -1 : 1, b = a === 'x' ? 'z' : 'x';
+  const front = s > 0 ? hi[a] : lo[a], back = s > 0 ? lo[a] : hi[a];
+  // keep the height/depth on the viewer's right of the front
+  const right = new THREE.Vector3(0, 0, 0); right[a] = s; right.cross(new THREE.Vector3(0, 1, 0)).negate();
+  const sideSign = right[b] >= 0 ? 1 : -1, side = sideSign > 0 ? hi[b] : lo[b];
+  const whd = (CABS[iso] && CABS[iso].whd) || null;
+  const W = whd ? whd[0] : size[b], H = whd ? whd[1] : size.y, D = whd ? whd[2] : size[a];
+  const off = Math.max(70, Math.min(160, Math.max(size.x, size.y, size.z) * 0.08)), ext = 25;
+  const pts = [];
+  const P = (pa, pb, py) => { const v = new THREE.Vector3(); v[a] = pa; v[b] = pb; v.y = py; return v; };
+  const seg = (u, v) => pts.push(u, v);
+  const group = new THREE.Group();
+  // width: above the top, along the front
+  const yW = hi.y + off;
+  seg(P(front, lo[b], hi.y + 10), P(front, lo[b], yW + ext)); seg(P(front, hi[b], hi.y + 10), P(front, hi[b], yW + ext));
+  seg(P(front, lo[b], yW), P(front, hi[b], yW));
+  const lw = dimLabel(fmt(W)); lw.position.copy(P(front, (lo[b] + hi[b]) / 2, yW)); group.add(lw);
+  // height: beside the cabinet, at the front
+  const bH = side + sideSign * off;
+  seg(P(front, side + sideSign * 10, lo.y), P(front, bH + sideSign * ext, lo.y)); seg(P(front, side + sideSign * 10, hi.y), P(front, bH + sideSign * ext, hi.y));
+  seg(P(front, bH, lo.y), P(front, bH, hi.y));
+  const lh = dimLabel(fmt(H)); lh.position.copy(P(front, bH, (lo.y + hi.y) / 2)); group.add(lh);
+  // depth: along the side at the top
+  const yD = hi.y + off;
+  seg(P(back, side, hi.y + 10), P(back, side, yD + ext));
+  seg(P(front, side, hi.y + 10), P(front, side, yD + ext));
+  seg(P(back, side, yD), P(front, side, yD));
+  const ld = dimLabel(fmt(D)); ld.position.copy(P((front + back) / 2, side, yD)); group.add(ld);
+  // end ticks (small diagonal slashes like a drawing)
+  const slash = (v, axis) => { const u = v.clone(), w = v.clone(); u[axis] -= 12; u.y -= 12; w[axis] += 12; w.y += 12; seg(u, w); };
+  slash(P(front, lo[b], yW), b); slash(P(front, hi[b], yW), b);
+  { const u = P(front, bH, lo.y), v = P(front, bH, hi.y); for (const q of [u, v]){ const m = q.clone(), n = q.clone(); m[b] -= 12; m.y -= 12; n[b] += 12; n.y += 12; seg(m, n); } }
+  slash(P(back, side, yD), a); slash(P(front, side, yD), a);
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({color: new THREE.Color(css('--fg')), depthTest: false, transparent: true}));
+  line.renderOrder = 21; group.add(line);
+  group.visible = !exTarget;
+  dims = group; scene.add(group);
+}
+$('vDims').onclick = () => { dimsOn = !dimsOn; $('vDims').setAttribute('aria-pressed', dimsOn);
+  try { localStorage.setItem('pf-dims', dimsOn ? '1' : '0'); } catch (_) {} buildDims(); reframe(); };
 
 function resize(){
   const w = stage.clientWidth, h = stage.clientHeight;
