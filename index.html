@@ -71,10 +71,11 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
     <button id="vJob" aria-pressed="false">Whole job</button>
     <button id="vSolid" aria-pressed="true" title="Show everything solid">Solid</button>
     <button id="vMulti" aria-pressed="false" title="Pick several cabinets to view together">Select cabs</button>
+    <button id="vPlan" aria-pressed="false" title="Plan view from above, with dimension chains">Plan</button>
     <button id="vGo" hidden>Isolate</button>
     <button id="vSee" aria-pressed="false" hidden title="See-through view">See-through</button>
     <button id="vExplode" aria-pressed="false" hidden>Explode</button>
-    <button id="vDims" aria-pressed="false" hidden title="Show cabinet width, height and depth">Dims</button>
+    <button id="vDims" aria-pressed="false" title="Show dimensions">Dims</button>
     <button id="vPrev" hidden title="Previous cabinet">&lsaquo; Prev</button>
     <button id="vNext" hidden title="Next cabinet">Next &rsaquo;</button>
     <button id="vBack" hidden>Back to job</button>
@@ -566,7 +567,7 @@ function row(label, sub, on, onChange){
   const id = 'tg' + Math.random().toString(36).slice(2, 8);
   const el = document.createElement('label'); el.className = 'tog'; el.htmlFor = id;
   el.innerHTML = '<input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '><span class="tl">' + esc(label) + '</span>' + (sub ? '<span class="ts">' + sub + '</span>' : '');
-  el.querySelector('input').addEventListener('change', e => { onChange(e.target.checked); applyVisibility(); });
+  el.querySelector('input').addEventListener('change', e => { onChange(e.target.checked); applyVisibility(); if (iso === null && (dimsOn || planOn)) buildDims(); });
   return el;
 }
 function buildSheet(){
@@ -662,6 +663,7 @@ function jobFront(){
   return c.addScaledVector(n.normalize(), 1000);
 }
 function reframe(){
+  if (planOn && iso === null){ planFrame(); return; }
   if (iso !== null){
     const cab = parts.filter(x => isoGs.has(x.p.g));
     const bx = boxOf(cab.concat(hardware.filter(h => isoGs.has(h.p.g))));
@@ -742,7 +744,9 @@ function isolate(g){
   $('vExplode').hidden = !on; $('vBack').hidden = !on; $('vPrev').hidden = !on || gs.length > 1; $('vNext').hidden = !on || gs.length > 1;
   $('vMulti').hidden = on;
   $('vExplode').setAttribute('aria-pressed', false); $('vExplode').textContent = 'Explode';
-  $('vDims').hidden = !on; $('vDims').setAttribute('aria-pressed', dimsOn);
+  $('vDims').hidden = false; $('vDims').setAttribute('aria-pressed', dimsOn);
+  $('vPlan').hidden = on;
+  if (on && planOn){ planOn = false; $('vPlan').setAttribute('aria-pressed', false); controls.enableRotate = true; camera.fov = 35; camera.updateProjectionMatrix(); }
   tipSel = null; $('tip').hidden = true; $('hint').hidden = false;
   buildDims();
   $('card').hidden = on;
@@ -812,6 +816,252 @@ renderer.domElement.addEventListener('pointerup', e => {
 });
 renderer.domElement.addEventListener('dblclick', e => e.preventDefault());
 
+// ---- runs: cabinets along one wall line, facing the same way (for shop-drawing style dimension chains) ----
+function computeRuns(){
+  const cabsG = [...new Set(parts.map(x => x.p.g))].filter(g => g >= 0);
+  const info = new Map();
+  for (const g of cabsG){
+    const list = parts.filter(x => x.p.g === g);
+    // the cabinet's own body: no doors/fronts (they overhang neighbours) and no long shared parts
+    // (an underpanel or shadowline running under several cabinets can belong to just one of them)
+    const W = CABS[g] && CABS[g].whd ? CABS[g].whd[0] : 0;
+    const longest = x => { const s = x.box.getSize(new THREE.Vector3()); return Math.max(s.x, s.z); };
+    let core = list.filter(x => !x.mover && (!W || longest(x) <= Math.max(W, CABS[g].whd[2] || 0) + 30));
+    if (!core.length) core = list.filter(x => !x.mover);
+    if (!core.length) core = list;
+    const box = boxOf(core);
+    const f = new THREE.Vector3();
+    for (const m of new Set(list.map(x => x.mover).filter(Boolean))) if (!m.m.inner && !m.parentMv) f.add(m.n);
+    f.y = 0;
+    info.set(g, {g, box, f: f.length() > 0.3 ? f.normalize() : null});
+  }
+  const axisOf = f => Math.abs(f.x) > Math.abs(f.z) ? new THREE.Vector3(Math.sign(f.x), 0, 0) : new THREE.Vector3(0, 0, Math.sign(f.z));
+  const lo = (b, v) => Math.min(b.min.dot(v), b.max.dot(v)), hi = (b, v) => Math.max(b.min.dot(v), b.max.dot(v));
+  // seeds: cabinets with doors / drawers tell us which way the run faces
+  const seeds = [...info.values()].filter(c => c.f).map(c => Object.assign(c, {d: axisOf(c.f)}));
+  const runs = [];
+  for (const s of seeds){
+    const d = s.d, u = new THREE.Vector3(0, 1, 0).cross(d);
+    const back = lo(s.box, d);
+    let run = runs.find(r => r.d.equals(d) && Math.abs(r.back - back) < 150 && lo(s.box, u) < r.u1 + 60 && hi(s.box, u) > r.u0 - 60);
+    if (!run){ run = {d, u, back, u0: Infinity, u1: -Infinity, gs: []}; runs.push(run); }
+    run.gs.push(s.g); run.u0 = Math.min(run.u0, lo(s.box, u)); run.u1 = Math.max(run.u1, hi(s.box, u)); run.back = Math.min(run.back, back);
+  }
+  // merge runs that ended up touching (seeds can arrive in any order)
+  for (let again = true; again;){
+    again = false;
+    for (let i = 0; i < runs.length && !again; i++) for (let j = i + 1; j < runs.length && !again; j++){
+      const a = runs[i], b = runs[j];
+      if (a.d.equals(b.d) && Math.abs(a.back - b.back) < 150 && a.u0 < b.u1 + 60 && b.u0 < a.u1 + 60){
+        a.gs.push(...b.gs); a.u0 = Math.min(a.u0, b.u0); a.u1 = Math.max(a.u1, b.u1); a.back = Math.min(a.back, b.back); runs.splice(j, 1); again = true;
+      }
+    }
+  }
+  // the rest (kicks, fillers, panels, benchtops, shadowlines) join the run whose footprint holds them
+  for (const c of info.values()){
+    if (c.f) continue;
+    const ctr = c.box.getCenter(new THREE.Vector3());
+    let best = null, bd = Infinity;
+    for (const r of runs){
+      const front = Math.max(...r.gs.filter(g => info.get(g).f).map(g => hi(info.get(g).box, r.d)));
+      const a = ctr.dot(r.u), b = ctr.dot(r.d);
+      if (a < r.u0 - 80 || a > r.u1 + 80 || b < r.back - 80 || b > front + 80) continue;
+      // a long item (kick, benchtop, shadowline) belongs to the run it runs along
+      const sz = c.box.getSize(new THREE.Vector3()), along = Math.abs(r.u.x) > .5 ? sz.x : sz.z, across = Math.abs(r.u.x) > .5 ? sz.z : sz.x;
+      const dist = Math.max(0, r.u0 - a, a - r.u1) + (across > along * 2 && across > 300 ? 1e6 : 0);
+      if (dist < bd){ bd = dist; best = r; }
+    }
+    if (best){ best.gs.push(c.g); }
+  }
+  for (const r of runs){
+    const rows = {K: [], B: [], U: []};
+    let y0 = Infinity, y1 = -Infinity, front = -Infinity;
+    r.u0 = Infinity; r.u1 = -Infinity;
+    r.uTop = -Infinity;
+    for (const g of r.gs){
+      const b = info.get(g).box, h = b.max.y - b.min.y, iv = [lo(b, r.u), hi(b, r.u), g];
+      y0 = Math.min(y0, b.min.y); y1 = Math.max(y1, b.max.y);
+      if (hiddenTypes.has(typeOf(g))) continue;            // hidden in Show / hide: no chain for it
+      if (typeOf(g) === 'toe' || b.max.y < 200){ rows.K.push(iv); r.u0 = Math.min(r.u0, iv[0]); r.u1 = Math.max(r.u1, iv[1]); continue; }
+      if (h < 80) continue;                                   // benchtops, shadowlines: height chain only
+      if (b.min.y < 800) rows.B.push(iv);
+      if (b.max.y > 1500){ rows.U.push(iv); r.uTop = Math.max(r.uTop, b.max.y); }
+      r.u0 = Math.min(r.u0, iv[0]); r.u1 = Math.max(r.u1, iv[1]); front = Math.max(front, hi(b, r.d));
+    }
+    if (!isFinite(front)) for (const g of r.gs) if (info.get(g).f) front = Math.max(front, hi(info.get(g).box, r.d));
+    r.front = front; r.rows = rows; r.y0 = y0; r.y1 = y1;
+    r.ys = heightStops(r.gs.map(g => info.get(g)));
+    r.depthB = rows.B.length ? Math.max(...rows.B.map(iv => hi(info.get(iv[2]).box, r.d))) - Math.min(...rows.B.map(iv => lo(info.get(iv[2]).box, r.d))) : 0;
+    r.depthU = rows.U.length ? Math.max(...rows.U.filter(iv => typeOf(iv[2]) === 'upper').map(iv => hi(info.get(iv[2]).box, r.d)).concat([-Infinity])) - Math.min(...rows.U.filter(iv => typeOf(iv[2]) === 'upper').map(iv => lo(info.get(iv[2]).box, r.d)).concat([Infinity])) : 0;
+  }
+  return runs.filter(r => r.rows.B.length + r.rows.U.length + r.rows.K.length);
+  // height chain like the shop drawings: kick, base, benchtop, splash gap, upper, shadowline
+  function heightStops(cs){
+    const H = c => CABS[c.g] && CABS[c.g].whd ? CABS[c.g].whd[1] : null;
+    const st = [];
+    const toe = cs.filter(c => c.box.max.y < 200);
+    const base = cs.filter(c => c.box.min.y < 300 && c.box.max.y > 600 && c.box.max.y < 1200);
+    const tall = cs.filter(c => c.box.min.y < 300 && c.box.max.y > 1500);
+    const slab = cs.filter(c => H(c) && H(c) <= 60 && c.box.min.y > 600 && c.box.min.y < 1200);
+    const upper = cs.filter(c => c.box.min.y > 1100 && c.box.max.y - c.box.min.y > 300 && !(H(c) && H(c) <= 60));
+    // floor line: top of the kick less CV's kick height (the kick's own box can include levelling feet)
+    const toeTop = toe.length ? Math.max(...toe.map(c => c.box.max.y)) : null;
+    const toeH = toe.map(H).find(Boolean);
+    const datum = toe.length ? (toeH ? toeTop - toeH : Math.min(...toe.map(c => c.box.min.y))) : Math.min(...base.concat(tall).map(c => c.box.min.y));
+    if (!isFinite(datum)) return [];
+    st.push(datum);
+    if (toe.length) st.push(toeTop);
+    if (base.length) st.push(Math.max(...base.map(c => c.box.max.y)));
+    for (const c of slab) st.push(c.box.min.y + H(c));
+    if (upper.length) st.push(Math.min(...upper.map(c => c.box.min.y)), Math.max(...upper.map(c => c.box.max.y)));
+    if (tall.length) st.push(Math.max(...tall.map(c => c.box.max.y)));
+    const topY = Math.max(-Infinity, ...upper.concat(tall).map(c => c.box.max.y));
+    for (const c of cs) if (H(c) && H(c) <= 60 && c.box.min.y >= topY - 3) st.push(c.box.min.y + H(c));   // shadowline / top filler
+    return merge(st);
+  }
+  function merge(vals){ vals.sort((a, b) => a - b); const out = []; for (const v of vals) if (!out.length || v - out[out.length - 1] > 3) out.push(v); return out; }
+}
+// chain segments of one row: every cabinet edge is a stop; returns [[from, to, label], ...]
+function chainOf(ivs, measured){
+  const stops = []; for (const [a, b] of ivs) stops.push(a, b);
+  stops.sort((a, b) => a - b);
+  const m = []; for (const v of stops) if (!m.length || v - m[m.length - 1] > 3) m.push(v);
+  const segs = [];
+  for (let i = 0; i + 1 < m.length; i++){
+    const a = m[i], b = m[i + 1], len = b - a;
+    // label with CV's own cabinet width when one cabinet spans exactly this stretch (e.g. 806.5)
+    // one cabinet spans exactly this stretch: label it with CV's cabinet width (what the cut list and drawings use)
+    const exact = ivs.filter(iv => Math.abs(iv[0] - a) < 3 && Math.abs(iv[1] - b) < 3);
+    const w = exact.length === 1 && CABS[exact[0][2]] && CABS[exact[0][2]].whd ? CABS[exact[0][2]].whd[0] : null;
+    // (kicks: where they actually sit, so the chain adds up to the overall)
+    segs.push([a, b, !measured && w && Math.abs(w - len) < 40 ? w : Math.round(len)]);
+  }
+  return segs;
+}
+
+// ---- whole-job dimensions: shop-drawing chains per run (Dims = on the 3D view, Plan = from above) ----
+let planOn = false;
+const dimLabels = [];
+function runDims(group, pts, plan){
+  const vis = parts.filter(x => x.meshes.some(m => m.visible));
+  if (!vis.length) return;
+  const all = boxOf(vis), sz = all.getSize(new THREE.Vector3());
+  // spacing between chain rows: about 1.6 label heights at the current zoom
+  const viewH = 2 * camera.position.distanceTo(controls.target) * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  const off = Math.max(60, LABEL_NDC / 2 * viewH * 1.6);
+  const topY = all.max.y + 40;
+  const seg = (a, b) => pts.push(a, b);
+  const runs = computeRuns();
+  for (const r of runs){
+    const P = (a, b, y) => r.u.clone().multiplyScalar(a).addScaledVector(r.d, b).setY(y);
+    const datum = r.ys.length ? r.ys[0] : 0;
+    // chains go in front of the run, unless another run (e.g. the island facing the kitchen) is in the way:
+    // then they go behind it. sgn flips which way the rows step out.
+    let F = r.front, sgn = 1;
+    if (plan){
+      const need = off * 5;
+      const blocked = runs.some(o => o !== r && o.gs.some(g => {
+        const b = boxOf(parts.filter(x => x.p.g === g)); const c = b.getCenter(new THREE.Vector3());
+        const along = c.dot(r.u), out = c.dot(r.d);
+        return along > r.u0 - 50 && along < r.u1 + 50 && out > r.front && out < r.front + need;
+      }));
+      if (blocked){ F = r.back; sgn = -1; }
+    }
+    const chain = (segs, pt, foot, pri) => {
+      if (!segs.length) return;
+      const stops = [segs[0][0]].concat(segs.map(x => x[1]));
+      const dir = pt(stops[stops.length - 1]).sub(pt(stops[0])).normalize();
+      for (const st of stops){
+        const p = pt(st), f = foot(st), e = p.clone().sub(f);
+        const eLen = e.length(); if (eLen > 1) e.divideScalar(eLen); else e.set(0, 1, 0);
+        seg(f.clone().addScaledVector(e, Math.min(15, eLen)), p.clone().addScaledVector(e, 20));
+        const t = dir.clone().add(e).normalize().multiplyScalar(14); seg(p.clone().sub(t), p.clone().add(t));
+      }
+      seg(pt(stops[0]), pt(stops[stops.length - 1]));
+      const s0 = pt(stops[0]).project(camera), s1 = pt(stops[stops.length - 1]).project(camera);
+      const level = Math.abs(s1.x - s0.x) * camera.aspect >= Math.abs(s1.y - s0.y);
+      for (const [a, b, l] of segs){
+        const sp = addDimLabel(group, String(l), pt((a + b) / 2), pri != null ? pri : (b - a < 60 ? 1 : 2), true);
+        if (level) sp.center.set(0.5, -0.05); else sp.center.set(-0.08, 0.5);
+      }
+    };
+    const overall = [[r.u0, r.u1, Math.round(r.u1 - r.u0)]];
+    // no repeated rows: talls give identical base and upper rows; a one-piece row already is the overall
+    const same = (x, y) => x.length === y.length && x.every((s, i) => Math.abs(s[0] - y[i][0]) < 3 && Math.abs(s[1] - y[i][1]) < 3);
+    const tidy = list => { const out = []; for (const x of list) if (x.length && !out.some(y => same(x, y))) out.push(x); return out; };
+    if (plan){
+      // rows in front of the run, like the plan sheet: bases, uppers, kicks, then the overall
+      const rows = tidy([chainOf(r.rows.B), chainOf(r.rows.U), chainOf(r.rows.K, true), overall]);
+      rows.forEach((segs, k) => chain(segs, s => P(s, F + sgn * off * (k + 1), topY), s => P(s, F, topY), k === rows.length - 1 ? 3 : null));
+      // depths at the end of the run
+      const dep = [];
+      if (r.rows.B.length && r.depthB > 0) dep.push(r.depthB);
+      if (r.rows.U.length && r.depthU > 0 && isFinite(r.depthU)) dep.push(r.depthU);
+      dep.forEach((dv, k) => chain([[r.front - dv, r.front, Math.round(dv)]], s => P(r.u1 + off * (k + 1), s, topY), s => P(r.u1, s, topY), 2));
+    } else {
+      // on the 3D view: uppers chained above, bases and the overall below, heights up the right-hand end
+      const B = chainOf(r.rows.B), U = chainOf(r.rows.U);
+      if (U.length) chain(U, s => P(s, F, r.uTop + off), s => P(s, F, r.uTop), null);
+      const below = tidy([B.length ? B : chainOf(r.rows.K, true), overall]).filter(x => !(U.length && same(x, U) && x !== overall));
+      below.forEach((segs, k) => chain(segs, s => P(s, F, datum - off * (k + 1)), s => P(s, F, datum), k === below.length - 1 ? 3 : null));
+      const hs = []; for (let i = 0; i + 1 < r.ys.length; i++) hs.push([r.ys[i], r.ys[i + 1], Math.round(r.ys[i + 1] - r.ys[i])]);
+      chain(hs, y => P(r.u1 + off, F, y), y => P(r.u1, F, y), 2);
+    }
+  }
+}
+const LABEL_NDC = 0.042;         // label height as a share of the screen's half-height
+function addDimLabel(group, text, pos, pri, small){
+  const sp = dimLabel(text);
+  if (small){ const f = 1 / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2); sp.scale.set(LABEL_NDC * sp.userData.aspect / f, LABEL_NDC / f, 1); }
+  sp.position.copy(pos); sp.userData.pri = pri; group.add(sp); dimLabels.push(sp);
+  return sp;
+}
+// labels never pile up: when two overlap on screen, the more important one stays (overall > cabinet > filler)
+const _v = new THREE.Vector3();
+function cullLabels(){
+  if (!dimLabels.length) return;
+  const H = renderer.domElement.clientHeight, W = renderer.domElement.clientWidth;
+  const f = 1 / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+  const placed = [];
+  const order = dimLabels.slice().sort((a, b) => b.userData.pri - a.userData.pri);
+  for (const sp of order){
+    _v.copy(sp.position); sp.parent.localToWorld(_v); _v.project(camera);
+    const w = sp.scale.x * f / 2 * H, h = sp.scale.y * f / 2 * H;
+    const x = (_v.x + 1) / 2 * W, y = (1 - _v.y) / 2 * H;
+    const cx = sp.center.x, cy = sp.center.y;
+    const rct = [x - w * cx, y - h * (1 - cy), x + w * (1 - cx), y + h * cy];
+    const ok = _v.z < 1 && !placed.some(q => rct[0] < q[2] && rct[2] > q[0] && rct[1] < q[3] && rct[3] > q[1]);
+    sp.visible = ok; if (ok) placed.push(rct);
+  }
+}
+function planFrame(extra){
+  const vis = parts.filter(x => x.meshes.some(m => m.visible));
+  const box = boxOf(vis.length ? vis : parts); if (extra) box.union(extra);
+  const ctr = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
+  // the kitchen's fronts face up the screen, like the plan sheet
+  // orient on the longest run (the main kitchen wall): its fronts face up the screen, wall at the bottom
+  const runs = computeRuns().filter(r => r.rows.B.length + r.rows.U.length);
+  const main = runs.sort((a, b) => (b.u1 - b.u0) - (a.u1 - a.u0))[0];
+  let f = main ? main.d.clone() : new THREE.Vector3(0, 0, 1);
+  const upLen = Math.abs(f.x) ? sz.x : sz.z, rightLen = Math.abs(f.x) ? sz.z : sz.x;
+  const vf = THREE.MathUtils.degToRad(camera.fov) / 2, hf = Math.atan(Math.tan(vf) * camera.aspect);
+  const dist = Math.max(upLen / 2 / Math.tan(vf), rightLen / 2 / Math.tan(hf)) * (extra ? 1.12 : 1.45) + box.max.y;
+  camera.position.copy(ctr).add(new THREE.Vector3(0, dist, 0)).addScaledVector(f, -dist * 0.0005);
+  camera.near = Math.max(20, dist / 200); camera.far = dist * 4 + 20000; camera.updateProjectionMatrix();
+  controls.target.copy(ctr); controls.update();
+}
+function setPlan(on){
+  planOn = on; $('vPlan').setAttribute('aria-pressed', on);
+  controls.enableRotate = !on;
+  camera.fov = on ? 20 : 35; camera.updateProjectionMatrix();
+  reframe(); buildDims();
+  if (on && dims){            // frame again with the chains in view, then redraw them at the new zoom
+    const b = new THREE.Box3(); dims.traverse(o => { if (o.isLineSegments){ o.geometry.computeBoundingBox(); b.union(o.geometry.boundingBox); } });
+    if (!b.isEmpty()){ planFrame(b); buildDims(); }
+  }
+}
+$('vPlan').onclick = () => setPlan(!planOn);
+
 // ---- pick several cabinets and isolate them together ----
 function updatePick(){
   $('vGo').hidden = !picking;
@@ -861,21 +1111,36 @@ $('tclose').onclick = () => showTip(null);
 
 // ---- dimensions: cabinet width above, height and depth on the side (CV's cabinet sizes) ----
 function dimLabel(text){
-  const c = document.createElement('canvas'); c.width = 256; c.height = 96;
+  // drawing style: just the number, no box. A thin halo in the background colour keeps it readable
+  // where it crosses a line or a cabinet.
+  const font = '600 44px "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif';
+  const m = document.createElement('canvas').getContext('2d'); m.font = font;
+  const tw = Math.ceil(m.measureText(text).width);
+  const c = document.createElement('canvas'); c.width = tw + 16; c.height = 60;
   const g = c.getContext('2d');
-  g.fillStyle = '#ffffff'; g.strokeStyle = '#1f2328'; g.lineWidth = 5;
-  g.beginPath(); g.roundRect ? g.roundRect(8, 14, 240, 68, 14) : g.rect(8, 14, 240, 68); g.fill(); g.stroke();
-  g.fillStyle = '#1f2328'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.font = '700 48px system-ui, sans-serif'; g.fillText(text, 128, 50);
+  g.font = font; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineJoin = 'round'; g.lineWidth = 6; g.strokeStyle = css('--stage'); g.strokeText(text, c.width / 2, 32);
+  g.fillStyle = css('--fg'); g.fillText(text, c.width / 2, 32);
   const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({map: t, depthTest: false, depthWrite: false, sizeAttenuation: false, transparent: true}));
-  sp.scale.set(0.075, 0.028, 1); sp.renderOrder = 22;
+  sp.userData.aspect = c.width / c.height;
+  sp.scale.set(0.024 * sp.userData.aspect, 0.024, 1); sp.renderOrder = 22;
   return sp;
 }
 function fmt(v){ return (Math.round(v * 10) / 10).toString(); }
 function buildDims(){
-  if (dims){ scene.remove(dims); dims.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material){ if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); dims = null; }
-  if (iso === null || !dimsOn) return;
+  if (dims){ scene.remove(dims); dims.traverse(o => { if (o.geometry && !o.isSprite) o.geometry.dispose(); if (o.material){ if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); dims = null; }
+  dimLabels.length = 0;
+  if (iso === null){
+    if (!dimsOn && !planOn) return;
+    const group = new THREE.Group(), pts = [];
+    runDims(group, pts, planOn);
+    const line = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({color: new THREE.Color(css('--fg')), depthTest: false, transparent: true}));
+    line.renderOrder = 21; group.add(line);
+    dims = group; scene.add(group); return;
+  }
+  if (!dimsOn) return;
   const group = new THREE.Group(), pts = [];
   // several cabinets: every width, but height and depth only once, on the right-most cabinet
   const gs = [...isoGs].filter(g => parts.some(x => x.p.g === g));
@@ -916,7 +1181,7 @@ function dimsFor(gid, group, pts, sideDims){
   const yW = hi.y + off;
   seg(P(front, lo[b], hi.y + 10), P(front, lo[b], yW + ext)); seg(P(front, hi[b], hi.y + 10), P(front, hi[b], yW + ext));
   seg(P(front, lo[b], yW), P(front, hi[b], yW));
-  const lw = dimLabel(fmt(W)); lw.position.copy(P(front, (lo[b] + hi[b]) / 2, yW)); group.add(lw);
+  const lw = dimLabel(fmt(W)); lw.position.copy(P(front, (lo[b] + hi[b]) / 2, yW)); lw.center.set(0.5, -0.05); group.add(lw);
   const slash = (v, axis) => { const u = v.clone(), w = v.clone(); u[axis] -= 12; u.y -= 12; w[axis] += 12; w.y += 12; seg(u, w); };
   slash(P(front, lo[b], yW), b); slash(P(front, hi[b], yW), b);
   if (!sideDims) return;
@@ -924,18 +1189,20 @@ function dimsFor(gid, group, pts, sideDims){
   const bH = side + sideSign * off;
   seg(P(front, side + sideSign * 10, lo.y), P(front, bH + sideSign * ext, lo.y)); seg(P(front, side + sideSign * 10, hi.y), P(front, bH + sideSign * ext, hi.y));
   seg(P(front, bH, lo.y), P(front, bH, hi.y));
-  const lh = dimLabel(fmt(H)); lh.position.copy(P(front, bH, (lo.y + hi.y) / 2)); group.add(lh);
+  const lh = dimLabel(fmt(H)); lh.position.copy(P(front, bH, (lo.y + hi.y) / 2)); lh.center.set(-0.08, 0.5); group.add(lh);
   // depth: along the side at the top
   const yD = hi.y + off;
   seg(P(back, side, hi.y + 10), P(back, side, yD + ext));
   seg(P(front, side, hi.y + 10), P(front, side, yD + ext));
   seg(P(back, side, yD), P(front, side, yD));
-  const ld = dimLabel(fmt(D)); ld.position.copy(P((front + back) / 2, side, yD)); group.add(ld);
+  const ld = dimLabel(fmt(D)); ld.position.copy(P((front + back) / 2, side, yD)); ld.center.set(0.5, -0.05); group.add(ld);
   { const u = P(front, bH, lo.y), v = P(front, bH, hi.y); for (const q of [u, v]){ const m = q.clone(), n = q.clone(); m[b] -= 12; m.y -= 12; n[b] += 12; n.y += 12; seg(m, n); } }
   slash(P(back, side, yD), a); slash(P(front, side, yD), a);
 }
 $('vDims').onclick = () => { dimsOn = !dimsOn; $('vDims').setAttribute('aria-pressed', dimsOn);
-  try { localStorage.setItem('pf-dims', dimsOn ? '1' : '0'); } catch (_) {} buildDims(); reframe(); };
+  try { localStorage.setItem('pf-dims', dimsOn ? '1' : '0'); } catch (_) {}
+  // cabinet view: frame around the dims once drawn; job view: frame first (chain spacing follows the zoom)
+  if (iso !== null){ buildDims(); reframe(); } else { reframe(); buildDims(); } };
 
 function resize(){
   const w = stage.clientWidth, h = stage.clientHeight;
@@ -945,10 +1212,10 @@ new ResizeObserver(() => { resize(); }).observe(stage);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paint);
 new MutationObserver(paint).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
 
-resize(); hintText(); fromHash();
+resize(); hintText(); fromHash(); $('vDims').setAttribute('aria-pressed', dimsOn); if (dimsOn) buildDims();
 (function loop(t){
   if (sel) for (const m of sel.meshes) m.material.emissiveIntensity = still ? .35 : .2 + .25 * (1 + Math.sin((t || 0) / 300)) / 2;
-  moveStep(); controls.update(); wallStep(); renderer.render(scene, camera); requestAnimationFrame(loop);
+  moveStep(); controls.update(); wallStep(); cullLabels(); renderer.render(scene, camera); requestAnimationFrame(loop);
 })();
 }
 </script>
