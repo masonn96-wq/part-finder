@@ -367,7 +367,7 @@ function moveStep(){
     if (moving) mv.k += (mv.target - mv.k) * (still ? 1 : 0.14);
     mv.moved = moving;
     if (!moving && !exDirty) continue;
-    if (mv.m.t === 'door') mv.pivot.quaternion.setFromAxisAngle(mv.axis, mv.k * (mv.m.a || 110) * Math.PI / 180);
+    if (mv.m.t === 'door') mv.pivot.quaternion.setFromAxisAngle(mv.axis, mv.k * (mv.m.a != null ? mv.m.a : 110) * Math.PI / 180);
     const off = mv.parentMv ? ZERO : (mv.front && mv.front.off) || ZERO;
     mv.pivot.position.copy(mv.P).addScaledVector(off, ex);
     if (mv.m.t === 'drawer') mv.pivot.position.addScaledVector(mv.n, mv.k * mv.travel);
@@ -426,6 +426,7 @@ for (const mv of movers){
 }
 // tap a door/drawer: roll-outs behind closed doors open the doors first; closing a door closes what is behind it
 function toggleMover(mv){
+  if (mv.m.fixed) return;                    // fixed blind panel: never opens
   if (mv.parentMv) return toggleMover(mv.parentMv);
   if (mv.covers.some(c => !c.target)){ mv.covers.forEach(c => c.target = 1); return; }
   mv.target = mv.target ? 0 : 1;
@@ -881,7 +882,7 @@ function singleTap(x){
     return;
   }
   if (!x){ if (selCab !== null) showCab(null); return; }
-  if (solid && x.mover){ toggleMover(x.mover); return; }
+  if (solid && x.mover && !x.mover.m.fixed){ toggleMover(x.mover); return; }
   if (x.p.g !== undefined && x.p.g >= 0) showCab(selCab === x.p.g ? null : x.p.g);
 }
 renderer.domElement.addEventListener('pointerdown', e => down = [e.clientX, e.clientY]);
