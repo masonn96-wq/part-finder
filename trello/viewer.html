@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D View</title>
+<script src="https://p.trellocdn.com/power-up.min.js"></script>
+<script src="./match.js"></script>
+<style>
+  :root { color-scheme: light; --ink:#172b4d; --mute:#5e6c84; --line:#dfe1e6; --bg:#f4f5f7; --accent:#0c66e4; --warn:#a54800; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #fff; color: var(--ink);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px;
+    border-bottom: 1px solid var(--line); background: var(--bg); }
+  #job { font-weight: 600; }
+  #note { color: var(--mute); }
+  #note.warn { color: var(--warn); }
+  .spacer { flex: 1; }
+  select, a.btn, button { font: inherit; height: 32px; border-radius: 4px; border: 1px solid var(--line);
+    background: #fff; color: var(--ink); padding: 0 10px; }
+  a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+  select { max-width: 340px; }
+  main { flex: 1; position: relative; min-height: 0; }
+  iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .empty { padding: 32px; color: var(--mute); max-width: 560px; }
+  .empty b { color: var(--ink); }
+</style>
+</head>
+<body>
+<header>
+  <span id="job">Loading…</span>
+  <span id="note"></span>
+  <span class="spacer"></span>
+  <label>Job <select id="pick" aria-label="Choose job"></select></label>
+  <a class="btn" id="newtab" target="_blank" rel="noopener" hidden>Open in new tab</a>
+</header>
+<main id="stage"><div class="empty">Loading jobs…</div></main>
+
+<script>
+var t = TrelloPowerUp.iframe({ appName: "Part Finder 3D" });
+var cardId = t.arg("cardId");
+var cardName = t.arg("cardName") || "";
+var pinned = t.arg("pinned") || "";
+var VIEWER = new URL("../", location.href);          // /part-finder/
+var INDEX = new URL("../jobs/index.json", location.href);
+var $ = function (id) { return document.getElementById(id); };
+var jobs = [];
+var hydrated = false;
+
+function note(text, warn) { $("note").textContent = text || ""; $("note").className = warn ? "warn" : ""; }
+
+function show(job) {
+  var stage = $("stage");
+  if (!job) {
+    $("job").textContent = cardName || "This card";
+    $("newtab").hidden = true;
+    stage.innerHTML = '<div class="empty"><b>No job picked for this card yet.</b><br>' +
+      'Choose one from the Job list above — it is remembered for this card.</div>';
+    return;
+  }
+  var url = new URL(VIEWER); url.searchParams.set("j", job.key);
+  $("job").textContent = job.name + (job.room ? " · " + job.room : "");
+  $("newtab").href = url.href; $("newtab").hidden = false;
+  $("pick").value = job.key;
+  var f = stage.querySelector("iframe");
+  if (!f) { stage.innerHTML = ""; f = document.createElement("iframe"); f.title = "3D viewer";
+    f.setAttribute("allow", "fullscreen"); stage.appendChild(f); }
+  if (f.src !== url.href) f.src = url.href;
+}
+
+function fillPicker(cands) {
+  var sel = $("pick"); sel.innerHTML = "";
+  var add = function (parent, j) { var o = document.createElement("option"); o.value = j.key;
+    o.textContent = j.name + (j.room ? " · " + j.room : ""); parent.appendChild(o); };
+  var blank = document.createElement("option"); blank.value = ""; blank.textContent = "— choose —"; sel.appendChild(blank);
+  var seen = {};
+  if (cands.length) { var g = document.createElement("optgroup"); g.label = "Likely";
+    cands.forEach(function (j) { seen[j.key] = 1; add(g, j); }); sel.appendChild(g); }
+  var rest = jobs.filter(function (j) { return !seen[j.key]; });
+  if (rest.length) { var g2 = document.createElement("optgroup"); g2.label = cands.length ? "All other jobs" : "All jobs";
+    rest.forEach(function (j) { add(g2, j); }); sel.appendChild(g2); }
+}
+
+$("pick").addEventListener("change", function () {
+  var key = this.value;
+  var job = jobs.filter(function (j) { return j.key === key; })[0] || null;
+  show(job);
+  // Explicit card id: the "card" shorthand reads/writes nothing inside a modal.
+  t.set(cardId, "shared", "pfJob", key || null)
+    .then(function () { note(key ? "Saved for this card." : "Cleared."); })
+    .catch(function (e) { note("Couldn't save the choice: " + e.message, true); });
+});
+
+function load() {
+  INDEX.searchParams.set("t", Date.now());               // GitHub Pages caches for 10 min
+  return fetch(INDEX.href, { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("jobs/index.json answered " + r.status); return r.json(); })
+    .then(function (data) {
+      jobs = (data && data.jobs) || [];
+      var m = PFMatch.match(cardName, jobs);
+      var pin = pinned && jobs.filter(function (j) { return j.key === pinned; })[0];
+      fillPicker(m.candidates);
+      if (pin) { show(pin); note("Chosen for this card."); return; }
+      if (pinned) note("The job saved for this card (" + pinned + ") is no longer in jobs/. Pick again.", true);
+      show(m.job);
+      if (m.job) { if (!pinned) note("Matched by " + (m.reason === "number" ? "job number" : "name") + "."); }
+      else if (!pinned) note({
+        "several-rooms": "This job number has more than one room — pick one.",
+        "weak-name": "Not sure which job this is — pick one.",
+        "no-match": "No job in jobs/ matches this card's name.",
+      }[m.reason] || "", true);
+    })
+    .catch(function (e) {
+      $("job").textContent = cardName || "This card";
+      $("stage").innerHTML = '<div class="empty"><b>Couldn\'t load the job list.</b><br>' + e.message + "</div>";
+      note("", false);
+    });
+}
+
+t.render(function () {
+  if (hydrated) return Promise.resolve();
+  hydrated = true;
+  return load();
+});
+</script>
+</body>
+</html>
