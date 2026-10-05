@@ -60,11 +60,39 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 .tip .x{grid-row:span 2;align-self:start;font:500 13px var(--display);padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
 .tip .specs{grid-column:1/-1;margin-top:6px;padding-top:8px}
 .tip .note{grid-column:1/-1;margin-top:6px;padding:6px 8px;border-radius:6px;background:var(--bg);font-size:14px;font-weight:600;border-left:3px solid var(--hi)}
+/* homepage: every uploaded job */
+.home{flex:1;min-height:0;overflow:auto;padding:16px 16px calc(24px + env(safe-area-inset-bottom,0px))}
+.home .in{max-width:720px;margin:0 auto}
+.home h1{font-size:28px;line-height:1.1;margin:8px 0 2px;letter-spacing:-.01em}
+.home .sub{color:var(--muted);font-size:15px;margin:0 0 14px}
+.home input{width:100%;font:500 16px var(--display);padding:12px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);margin-bottom:12px}
+.home input:focus-visible{outline:2px solid var(--hi);outline-offset:1px}
+.jobs{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.jobs a{display:grid;grid-template-columns:auto 1fr auto;gap:2px 14px;align-items:center;padding:12px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);text-decoration:none;min-height:44px}
+.jobs a:hover{border-color:var(--edge)}
+.jobs a:focus-visible{outline:2px solid var(--hi);outline-offset:2px}
+.jobs .no{grid-row:span 2;background:var(--hi);color:var(--hi-ink);font:600 14px var(--mono);border-radius:6px;padding:8px 8px;min-width:64px;text-align:center}
+.jobs .no.none{background:var(--line);color:var(--muted)}
+.jobs .nm{font-size:17px;font-weight:600;line-height:1.2;min-width:0;overflow-wrap:anywhere}
+.jobs .mt{color:var(--muted);font:500 12px var(--mono);font-variant-numeric:tabular-nums}
+.jobs .go{grid-row:span 2;color:var(--muted);font-size:22px}
+.home .empty{color:var(--muted);padding:24px 4px;text-align:center}
+.strip a{color:inherit;text-decoration:none}
+.strip a:hover{color:var(--fg)}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 
 </head><body>
-<div class="strip"><span>Job <b id="job">385</b> · <span id="room">Room 1</span></span><span id="count"></span></div>
+<div class="strip"><span><a href="./" title="All jobs">&lsaquo; Jobs</a> · Job <b id="job">–</b> · <span id="room">Room 1</span></span><span id="count"></span></div>
+<main class="home" id="home" hidden>
+  <div class="in">
+    <h1>Part Finder</h1>
+    <p class="sub">Pick a job to open its 3D model.</p>
+    <input id="q" type="search" placeholder="Search job number, name or room" aria-label="Search jobs" autocomplete="off">
+    <ul class="jobs" id="jobs"></ul>
+    <p class="empty" id="jobsEmpty" hidden></p>
+  </div>
+</main>
 <div id="stage">
   <div class="views" role="group" aria-label="View">
     <button id="vCab" aria-pressed="true">Cabinet</button>
@@ -97,7 +125,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 <div class="card empty" id="card">
   <div class="tag"><i id="ptag" style="font-style:normal">ID</i><span id="pid">–</span></div>
   <div class="name" id="pname">Scan a part label</div>
-  <div class="where" id="pwhere">The part will light up in orange where it fits.</div>
+  <div class="where" id="pwhere">Scan a sticker to light up its part, or tap a cabinet to see its size.</div>
   <div class="specs" id="pspecs"></div>
 </div>
 
@@ -111,12 +139,50 @@ const RAWJ = (Q.get('j') || '').trim();
 // Older pages were keyed by the J number only, so that is tried second.
 const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 const NUM = RAWJ.match(/(?:^|[^A-Za-z0-9])(J\d{3,})(?!\d)/i);
-const KEYS = [...new Set([slug(RAWJ), NUM ? slug(NUM[1]) : ''].filter(Boolean))];
+// ---- homepage: no job in the link -> list every uploaded job (jobs/index.json, kept by the sync)
+async function home(filter){
+  const $ = id => document.getElementById(id);
+  document.title = 'Part Finder';
+  $('stage').hidden = true; $('card').hidden = true; $('home').hidden = false;
+  document.querySelector('.strip').innerHTML = '<span><b>Part Finder</b> · All jobs</span><span id="count"></span>';
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let jobs = [];
+  try { const r = await fetch('jobs/index.json', {cache: 'no-cache'}); if (r.ok) jobs = (await r.json()).jobs || []; } catch (_) {}
+  $('count').textContent = jobs.length + (jobs.length === 1 ? ' job' : ' jobs');
+  const draw = () => {
+    const q = $('q').value.trim().toLowerCase();
+    const list = jobs.filter(j => !q || [j.name, j.number, j.room].join(' ').toLowerCase().includes(q));
+    $('jobs').innerHTML = list.map(j => {
+      const meta = [j.room, j.cabs ? j.cabs + ' cabs' : '', j.parts ? j.parts + ' parts' : '', j.updated ? 'updated ' + j.updated : ''].filter(Boolean).join(' · ');
+      return '<li><a href="?j=' + encodeURIComponent(j.key) + '"><span class="no' + (j.number ? '' : ' none') + '">' + esc(j.number || 'JOB') + '</span>' +
+        '<span class="nm">' + esc(j.name) + '</span><span class="go" aria-hidden="true">&rsaquo;</span><span class="mt">' + esc(meta) + '</span></a></li>';
+    }).join('');
+    $('jobsEmpty').hidden = list.length > 0;
+    $('jobsEmpty').textContent = !jobs.length ? 'No jobs uploaded yet. Jobs appear here after the sync publishes them.' : 'No job matches "' + $('q').value + '".';
+  };
+  $('q').addEventListener('input', draw);
+  if (filter) $('q').value = filter;
+  draw();
+}
 (async () => {
-  for (const k of KEYS){
-    try { const r = await fetch('jobs/' + encodeURIComponent(k) + '.json'); if (r.ok) return start(await r.json()); } catch (_) {}
+  if (!RAWJ) return home();
+  const load = async k => { try { const r = await fetch('jobs/' + encodeURIComponent(k) + '.json'); if (r.ok) return await r.json(); } catch (_) {} return null; };
+  // 1. the full CV job name (sticker QRs)
+  let job = null;
+  if (!(NUM && slug(RAWJ) === slug(NUM[1])) && (job = await load(slug(RAWJ)))) return start(job);
+  // 2. just the job number (e.g. the QR on the shop drawings: ?j=J974): look it up in the job list. One CV job
+  //    with that number opens straight away; several (kitchen, laundry...) show the list for that number.
+  if (NUM){
+    let jobs = [];
+    try { const r = await fetch('jobs/index.json', {cache: 'no-cache'}); if (r.ok) jobs = (await r.json()).jobs || []; } catch (_) {}
+    const hits = jobs.filter(j => (j.number || '').toUpperCase() === NUM[1].toUpperCase() && j.key !== slug(NUM[1]));
+    if (hits.length === 1 && (job = await load(hits[0].key))) return start(job);
+    if (hits.length > 1) return home(NUM[1].toUpperCase());
+    // 3. last resort: an old page saved under the J number only
+    if ((job = await load(slug(NUM[1])))) return start(job);
   }
-  document.getElementById('pname').textContent = 'Job not found'; document.getElementById('pwhere').textContent = 'Rescan the label, or check the job has been uploaded.';
+  document.getElementById('pname').textContent = 'Job not found';
+  document.getElementById('pwhere').innerHTML = 'Rescan the label, or <a href="./">pick the job from the list</a>.';
 })();
 function start(JOB){
 const $ = id => document.getElementById(id);
@@ -690,7 +756,7 @@ function show(x){
   if (!sel){
     card.classList.add('empty'); $('pid').textContent = '–';
     $('pname').textContent = 'Scan a part label';
-    $('pwhere').textContent = 'The part will light up in orange where it fits.';
+    $('pwhere').textContent = 'Scan a sticker to light up its part, or tap a cabinet to see its size.';
     $('pspecs').innerHTML = '';
   } else {
     const p = sel.p;
