@@ -123,8 +123,11 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 const stage = $('stage');
 // logarithmic depth: phones have far less depth precision than desktops, which made hidden parts
 // (hinges, back faces, edges) bleed through door faces
-const renderer = new THREE.WebGLRenderer({antialias:true, logarithmicDepthBuffer:true, precision:'highp'});
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// phones: Safari closes the page if it uses too much memory, so phones get a lighter canvas and textures
+const PHONE = matchMedia('(pointer: coarse)').matches || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const TEX_MAX = PHONE ? 1024 : 2048;
+const renderer = new THREE.WebGLRenderer({antialias:true, logarithmicDepthBuffer:true, precision:'highp', powerPreference:'low-power'});
+renderer.setPixelRatio(Math.min(devicePixelRatio, PHONE ? 1.5 : 2));
 stage.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(35, 1, 10, 50000);
@@ -162,7 +165,14 @@ function texture(file){
   if (!texCache[file]){
     texUsers[file] = [];
     const t = loader.load('textures/' + encodeURIComponent(file),
-      img => { (texVariants[file] || []).forEach(v => { v.image = t.image; v.needsUpdate = true; }); texUsers[file].forEach(m => { m.needsUpdate = true; }); },
+      img => {
+        // shrink big pictures (a 1500 x 2500 board photo is ~20 MB on the graphics chip) - looks the same on screen
+        const w = img.width, h = img.height, k = TEX_MAX / Math.max(w, h);
+        if (k < 1){
+          const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); t.image = c; t.needsUpdate = true;
+        }
+        (texVariants[file] || []).forEach(v => { v.image = t.image; v.needsUpdate = true; }); texUsers[file].forEach(m => { m.needsUpdate = true; }); },
       undefined,
       () => texUsers[file].forEach(m => { m.map = null; m.color.copy(m.userData.fallback); m.userData.base.copy(m.userData.fallback); m.needsUpdate = true; }));
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
@@ -238,6 +248,9 @@ function makeObject(rec, isPart){
       e.userData.mi = s.m;
       scene.add(e); edges.push(e); }
   }
+  // the job file's number lists are now on the graphics chip: drop them so the phone isn't holding two copies
+  if (rec.subs) for (const s of rec.subs){ s.p = s.u = s.i = s.e = null; }
+  if (rec.mesh) rec.mesh = null;
   return {p: rec, meshes, edges, box};
 }
 const parts = JOB.parts.map(p => makeObject(p, true));
