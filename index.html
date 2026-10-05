@@ -139,15 +139,19 @@ const RAWJ = (Q.get('j') || '').trim();
 // Older pages were keyed by the J number only, so that is tried second.
 const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 const NUM = RAWJ.match(/(?:^|[^A-Za-z0-9])(J\d{3,})(?!\d)/i);
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// the list of published jobs (jobs/index.json, kept by the sync)
+async function jobIndex(){
+  try { const r = await fetch('jobs/index.json', {cache: 'no-cache'}); if (r.ok) return (await r.json()).jobs || []; } catch (_) {}
+  return [];
+}
 // ---- homepage: no job in the link -> list every uploaded job (jobs/index.json, kept by the sync)
 async function home(filter){
-  const $ = id => document.getElementById(id);
   document.title = 'Part Finder';
   $('stage').hidden = true; $('card').hidden = true; $('home').hidden = false;
   document.querySelector('.strip').innerHTML = '<span><b>Part Finder</b> · All jobs</span><span id="count"></span>';
-  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  let jobs = [];
-  try { const r = await fetch('jobs/index.json', {cache: 'no-cache'}); if (r.ok) jobs = (await r.json()).jobs || []; } catch (_) {}
+  const jobs = await jobIndex();
   $('count').textContent = jobs.length + (jobs.length === 1 ? ' job' : ' jobs');
   const draw = () => {
     const q = $('q').value.trim().toLowerCase();
@@ -173,27 +177,27 @@ async function home(filter){
   // 2. just the job number (e.g. the QR on the shop drawings: ?j=J974): look it up in the job list. One CV job
   //    with that number opens straight away; several (kitchen, laundry...) show the list for that number.
   if (NUM){
-    let jobs = [];
-    try { const r = await fetch('jobs/index.json', {cache: 'no-cache'}); if (r.ok) jobs = (await r.json()).jobs || []; } catch (_) {}
-    const hits = jobs.filter(j => (j.number || '').toUpperCase() === NUM[1].toUpperCase() && j.key !== slug(NUM[1]));
+    const hits = (await jobIndex()).filter(j => (j.number || '').toUpperCase() === NUM[1].toUpperCase() && j.key !== slug(NUM[1]));
     if (hits.length === 1 && (job = await load(hits[0].key))) return start(job);
     if (hits.length > 1) return home(NUM[1].toUpperCase());
     // 3. last resort: an old page saved under the J number only
     if ((job = await load(slug(NUM[1])))) return start(job);
   }
-  document.getElementById('pname').textContent = 'Job not found';
-  document.getElementById('pwhere').innerHTML = 'Rescan the label, or <a href="./">pick the job from the list</a>.';
+  $('pname').textContent = 'Job not found';
+  $('pwhere').innerHTML = 'Rescan the label, or <a href="./">pick the job from the list</a>.';
 })();
+// ---- the 3D view of one job ----
 function start(JOB){
-const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const stage = $('stage');
-// logarithmic depth: phones have far less depth precision than desktops, which made hidden parts
-// (hinges, back faces, edges) bleed through door faces
 // phones: Safari closes the page if it uses too much memory, so phones get a lighter canvas and textures
 const PHONE = matchMedia('(pointer: coarse)').matches || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 const TEX_MAX = PHONE ? 1024 : 2048;
+// logarithmic depth: phones have far less depth precision than desktops, which made hidden parts
+// (hinges, back faces, edges) bleed through door faces. (It ignores polygonOffset, so the converter keeps
+// coplanar faces 2 mm apart instead.)
 const renderer = new THREE.WebGLRenderer({antialias:true, logarithmicDepthBuffer:true, precision:'highp', powerPreference:'low-power'});
 renderer.setPixelRatio(Math.min(devicePixelRatio, PHONE ? 1.5 : 2));
 stage.prepend(renderer.domElement);
@@ -300,7 +304,7 @@ function outline(g){
   const eg = new THREE.BufferGeometry(); eg.setAttribute('position', new THREE.Float32BufferAttribute(out, 3)); return eg;
 }
 function makeObject(rec, isPart){
-  const subs = rec.subs || [{m: -1, p: rec.mesh.p, i: rec.mesh.i}];
+  const subs = rec.subs || [{m: -1, p: rec.mesh.p, i: rec.mesh.i}];   // (v1 job files: one plain mesh)
   const meshes = [], edges = [], box = new THREE.Box3();
   for (const s of subs){
     const g = geo(s);
@@ -308,7 +312,7 @@ function makeObject(rec, isPart){
     mesh.userData.mi = s.m;
     if (isPart) mesh.userData.part = rec;
     scene.add(mesh); meshes.push(mesh); box.union(g.boundingBox);
-    if (isPart || rec.r){
+    if (isPart || rec.r){                 // (older job files flag drawn route outlines with r)
       let eg;
       if (s.e && s.e.length){ eg = new THREE.BufferGeometry(); eg.setAttribute('position', g.attributes.position); eg.setIndex(s.e); }
       else eg = outline(g);
@@ -356,6 +360,7 @@ const movers = (JOB.movers || []).map(m => {
   for (const o of objs) o.mover = mv;
   return mv;
 });
+const arms = [];                         // hinge arms, set up below
 // explode: each piece of the isolated cabinet moves away from the cabinet centre
 let ex = 0, exTarget = 0, exDirty = false;
 const ZERO = new THREE.Vector3();
@@ -390,7 +395,6 @@ function moveStep(){
     exDirty = false;
   }
 }
-const arms = [];
 for (const mv of movers) for (const pair of (mv.m.arms || [])){
   const [k, cupK] = Array.isArray(pair) ? pair : [pair, -1];
   const h = hardware[k]; if (!h) continue;
@@ -436,11 +440,10 @@ function toggleMover(mv){
 $('job').textContent = JOB.job;
 $('count').textContent = byId.size + ' parts';
 
-let sel = null, view = 'cab', pulse = 0, solid = true, iso = null, isoSolid = true, tipSel = null, dimsOn = false, dims = null;
+let sel = null, view = 'cab', solid = true, iso = null, isoSolid = true, tipSel = null, dimsOn = false, dims = null;
 let selCab = null;
 let isoGs = new Set(), picking = false; const pickSet = new Set();   // isolated cabinets; cabinets being picked
 try { dimsOn = localStorage.getItem('pf-dims') === '1'; } catch (_) {}
-const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function setLook(x, opacity, edgeColor, edgeOpacity, tint){
   for (const m of x.meshes){
@@ -787,7 +790,6 @@ function showCab(g){
     '<span>' + n + ' cut-list parts</span>';
   paint();
 }
-function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function fromHash(){
   const h = (Q.get('p') || decodeURIComponent(location.hash.slice(1))).replace(/^p/i, '');
@@ -1040,7 +1042,7 @@ new ResizeObserver(() => { resize(); }).observe(stage);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paint);
 new MutationObserver(paint).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
 
-resize(); hintText(); fromHash(); $('vDims').setAttribute('aria-pressed', dimsOn); if (dimsOn) buildDims();
+resize(); hintText(); fromHash();
 (function loop(t){
   if (sel) for (const m of sel.meshes) m.material.emissiveIntensity = still ? .35 : .2 + .25 * (1 + Math.sin((t || 0) / 300)) / 2;
   moveStep(); controls.update(); wallStep(); renderer.render(scene, camera); requestAnimationFrame(loop);
