@@ -83,11 +83,20 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 .home .empty{color:var(--muted);padding:24px 4px;text-align:center}
 .strip a{color:inherit;text-decoration:none}
 .strip a:hover{color:var(--fg)}
+/* barcode scanner (PDF417 stickers from the old CV, and QR): camera fills the screen */
+.strip .right{display:flex;align-items:center;gap:12px}
+.scanbtn{font:600 13px var(--display);letter-spacing:.06em;text-transform:uppercase;padding:7px 12px;border-radius:6px;border:1px solid var(--hi);background:var(--hi);color:var(--hi-ink);cursor:pointer;min-height:34px}
+.scanbtn:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.scan{position:fixed;inset:0;z-index:50;background:#000;display:flex;align-items:center;justify-content:center}
+.scan video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.scan .frame{position:relative;width:min(80vw,520px);height:min(42vh,300px);border:3px solid #fff;border-radius:12px;box-shadow:0 0 0 100vmax rgba(0,0,0,.45)}
+.scan p{position:absolute;left:16px;right:16px;bottom:calc(84px + env(safe-area-inset-bottom,0px));margin:0;text-align:center;color:#fff;font:600 17px var(--display);text-shadow:0 1px 3px #000}
+.scan button{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(24px + env(safe-area-inset-bottom,0px));font:600 16px var(--display);padding:12px 28px;border-radius:8px;border:0;background:#fff;color:#111;cursor:pointer}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 
 </head><body>
-<div class="strip"><span><a href="./" title="All jobs">&lsaquo; Jobs</a> · Job <b id="job">–</b> · <span id="room">Room 1</span></span><span id="count"></span></div>
+<div class="strip"><span><a href="./" title="All jobs">&lsaquo; Jobs</a> · Job <b id="job">–</b> · <span id="room">Room 1</span></span><span class="right"><button type="button" class="scanbtn" data-scan>Scan</button><span id="count"></span></span></div>
 <main class="home" id="home" hidden>
   <div class="in">
     <h1>Part Finder</h1>
@@ -134,6 +143,13 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
   <div class="specs" id="pspecs"></div>
 </div>
 
+<div class="scan" id="scan" hidden>
+  <video id="scanVideo" playsinline muted></video>
+  <div class="frame" aria-hidden="true"></div>
+  <p id="scanMsg" aria-live="polite"></p>
+  <button type="button" id="scanClose">Close</button>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
@@ -146,6 +162,69 @@ const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g
 const NUM = RAWJ.match(/(?:^|[^A-Za-z0-9])(J\d{3,})(?!\d)/i);
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// ---- scanner: reads the PDF417 stickers the old CV prints (and QR), for phones whose camera app can't ----
+// The reader (ZXing, compiled to WebAssembly) only downloads when Scan is first tapped.
+const ZXING_JS = 'https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js';
+const ZXING_WASM = 'https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/reader/zxing_reader.wasm';
+let zxing = null;
+function loadZxing(){
+  if (!zxing) zxing = new Promise((ok, fail) => {
+    const s = document.createElement('script'); s.src = ZXING_JS;
+    s.onload = () => { try {
+      ZXingWASM.prepareZXingModule({overrides: {locateFile: (path, prefix) => path.endsWith('.wasm') ? ZXING_WASM : prefix + path}});
+      ok(ZXingWASM);
+    } catch (e) { fail(e); } };
+    s.onerror = () => { zxing = null; fail(new Error('the scanner did not load - check the internet connection')); };
+    document.head.appendChild(s);
+  });
+  return zxing;
+}
+// what a sticker's barcode points to: a Part Finder link (?j=job&p=part), "job|part", or a bare part number
+function scanTarget(text){
+  text = String(text || '').trim();
+  try { const u = new URL(text), j = u.searchParams.get('j'); if (j) return {j, p: u.searchParams.get('p') || decodeURIComponent(u.hash.slice(1))}; } catch (_) {}
+  const bits = text.split('|');
+  if (bits.length === 2 && bits[0].trim()) return {j: bits[0].trim(), p: bits[1].trim()};
+  if (/^\d+$/.test(text) && RAWJ) return {j: RAWJ, p: text};
+  return null;
+}
+async function openScan(){
+  const box = $('scan'), video = $('scanVideo'), msg = $('scanMsg');
+  let stream = null, alive = true;
+  const stop = () => { alive = false; if (stream) stream.getTracks().forEach(t => t.stop()); video.srcObject = null; box.hidden = true; };
+  $('scanClose').onclick = stop;
+  box.hidden = false; msg.textContent = 'Starting the camera…';
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('this browser cannot use the camera');
+    const [zx, s] = await Promise.all([loadZxing(), navigator.mediaDevices.getUserMedia(
+      {audio: false, video: {facingMode: {ideal: 'environment'}, width: {ideal: 1920}, height: {ideal: 1080}}})]);
+    stream = s;
+    if (!alive) return stop();
+    video.srcObject = stream; await video.play();
+    msg.textContent = 'Point at the barcode on the sticker';
+    const c = document.createElement('canvas'), g = c.getContext('2d', {willReadFrequently: true});
+    while (alive){
+      if (video.videoWidth){
+        c.width = video.videoWidth; c.height = video.videoHeight; g.drawImage(video, 0, 0);
+        const found = await zx.readBarcodes(g.getImageData(0, 0, c.width, c.height),
+          {formats: ['PDF417', 'QRCode'], tryHarder: true, maxNumberOfSymbols: 1});
+        const hit = found.find(r => r.isValid && scanTarget(r.text));
+        if (hit){
+          const t = scanTarget(hit.text); stop();
+          location.assign('?j=' + encodeURIComponent(t.j) + (t.p ? '&p=' + encodeURIComponent(t.p) : ''));
+          return;
+        }
+        if (found.some(r => r.isValid)) msg.textContent = 'That barcode is not a part sticker';
+      }
+      await new Promise(r => setTimeout(r, 150));
+    }
+  } catch (e){
+    msg.textContent = e && e.name === 'NotAllowedError' ? 'Camera blocked - allow camera access for this site in your browser settings'
+      : 'Could not start the scanner: ' + ((e && e.message) || e);
+  }
+}
+document.addEventListener('click', e => { if (e.target.closest && e.target.closest('[data-scan]')) openScan(); });
+
 // the list of published jobs (jobs/index.json, kept by the sync)
 async function jobIndex(){
   try { const r = await fetch('jobs/index.json', {cache: 'no-cache'}); if (r.ok) return (await r.json()).jobs || []; } catch (_) {}
@@ -155,7 +234,7 @@ async function jobIndex(){
 async function home(filter){
   document.title = 'Part Finder';
   $('stage').hidden = true; $('card').hidden = true; $('home').hidden = false;
-  document.querySelector('.strip').innerHTML = '<span><b>Part Finder</b> · All jobs</span><span id="count"></span>';
+  document.querySelector('.strip').innerHTML = '<span><b>Part Finder</b> · All jobs</span><span class="right"><button type="button" class="scanbtn" data-scan>Scan</button><span id="count"></span></span>';
   const jobs = await jobIndex();
   $('count').textContent = jobs.length + (jobs.length === 1 ? ' job' : ' jobs');
   const draw = () => {
