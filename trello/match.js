@@ -57,7 +57,20 @@
     return { job: null, candidates: cands, reason: "weak-name" };
   }
 
-  var api = { match: match, rank: rank, jobNumber: jobNumber, words: words };
+  // What a card should show: its pinned job if that still exists, else the match.
+  function resolve(cardName, jobs, pinned) {
+    var m = match(cardName, jobs);
+    var pin = pinned ? (jobs || []).filter(function (j) { return j.key === pinned; })[0] : null;
+    return {
+      job: pin || m.job,
+      pinned: !!pin,
+      pinMissing: !!pinned && !pin,
+      reason: pin ? "pinned" : m.reason,
+      candidates: m.candidates,
+    };
+  }
+
+  var api = { match: match, resolve: resolve, rank: rank, jobNumber: jobNumber, words: words };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.PFMatch = api;
 })(this);

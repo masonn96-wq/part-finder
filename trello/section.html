@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D View panel</title>
+<script src="https://p.trellocdn.com/power-up.min.js"></script>
+<script src="./match.js"></script>
+<style>
+  :root { color-scheme: light; --ink:#172b4d; --mute:#5e6c84; --line:#dfe1e6; --bg:#f4f5f7; --warn:#a54800; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #fff; color: var(--ink);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  .bar { display: flex; align-items: center; gap: 8px; padding: 0 0 8px; min-height: 40px; }
+  #job { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #note { color: var(--mute); white-space: nowrap; }
+  #note.warn { color: var(--warn); white-space: normal; }
+  .spacer { flex: 1; }
+  button { font: inherit; height: 32px; border-radius: 4px; border: 1px solid var(--line); background: var(--bg);
+    color: var(--ink); padding: 0 12px; cursor: pointer; white-space: nowrap; }
+  button:hover { background: #ebecf0; }
+  .stage { flex: 1; position: relative; min-height: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #fafbfc; }
+  iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .msg { padding: 24px; color: var(--mute); }
+  .msg b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="bar">
+  <span id="job">Loading…</span>
+  <span id="note"></span>
+  <span class="spacer"></span>
+  <button id="change" type="button">Change job</button>
+  <button id="full" type="button">Full screen</button>
+</div>
+<div class="stage" id="stage"><div class="msg">Loading…</div></div>
+
+<script>
+var t = TrelloPowerUp.iframe({ appName: "Part Finder 3D" });
+var ctx = {}; try { ctx = t.getContext() || {}; } catch (e) {}
+var cardId = ctx.card || "";
+var cardName = t.arg("cardName") || "";
+var VIEWER = new URL("../", location.href);
+var INDEX = new URL("../jobs/index.json", location.href);
+var $ = function (id) { return document.getElementById(id); };
+var jobs = null, shownKey = null, pinned = "";
+
+function note(text, warn) { $("note").textContent = text || ""; $("note").className = warn ? "warn" : ""; }
+function message(html) { shownKey = null; $("stage").innerHTML = '<div class="msg">' + html + "</div>"; }
+
+function loadJobs() {
+  if (jobs) return Promise.resolve(jobs);
+  INDEX.searchParams.set("t", Date.now());
+  return fetch(INDEX.href, { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("jobs/index.json answered " + r.status); return r.json(); })
+    .then(function (d) { jobs = (d && d.jobs) || []; return jobs; });
+}
+
+function show(job) {
+  $("job").textContent = job.name + (job.room ? " · " + job.room : "");
+  if (shownKey === job.key) return;              // never reload the 3D under someone's hand
+  shownKey = job.key;
+  var url = new URL(VIEWER); url.searchParams.set("j", job.key);
+  $("stage").innerHTML = "";
+  var f = document.createElement("iframe");
+  f.title = "3D viewer"; f.setAttribute("allow", "fullscreen"); f.src = url.href;
+  $("stage").appendChild(f);
+}
+
+// Re-runs whenever this card's plugin data changes (e.g. a job picked in the
+// full-screen window), so the panel follows the choice without a refresh.
+function refresh() {
+  return Promise.all([loadJobs(), t.get(cardId, "shared", "pfJob").catch(function () { return ""; })])
+    .then(function (r) {
+      pinned = r[1] || "";
+      var res = PFMatch.resolve(cardName, r[0], pinned);
+      if (res.pinMissing) note("Saved job no longer in jobs/ — using the name match.", true);
+      else note(res.reason === "pinned" ? "Chosen for this card" : res.reason === "number" ? "Matched by job number" : res.job ? "Matched by name" : "");
+      if (res.job) show(res.job);
+      else { $("job").textContent = cardName || "This card";
+        message("<b>No job for this card.</b><br>Use <b>Change job</b> to pick one."); }
+    })
+    .catch(function (e) {
+      $("job").textContent = cardName || "This card"; note("");
+      message("<b>Couldn't load the job list.</b><br>" + e.message);
+    });
+}
+
+function openModal() {
+  return t.modal({
+    url: "./viewer.html",
+    args: { cardId: cardId, cardName: cardName, pinned: pinned },
+    fullscreen: true,
+    title: "3D View",
+  }).catch(function (e) { note("Couldn't open: " + e.message, true); });
+}
+$("full").addEventListener("click", openModal);
+$("change").addEventListener("click", openModal);
+
+t.render(refresh);
+</script>
+</body>
+</html>
