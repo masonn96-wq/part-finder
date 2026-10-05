@@ -64,8 +64,6 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
     <button id="vSolid" aria-pressed="true" title="Show everything solid">Solid</button>
     <button id="vSee" aria-pressed="false" hidden title="See-through view">See-through</button>
     <button id="vExplode" aria-pressed="false" hidden>Explode</button>
-    <button id="vPrev" hidden title="Previous cabinet">&lsaquo; Prev</button>
-    <button id="vNext" hidden title="Next cabinet">Next &rsaquo;</button>
     <button id="vBack" hidden>Back to job</button>
     <button id="vLayers" aria-pressed="false" title="Show or hide cabinets, materials and parts">Show / hide</button>
   </div>
@@ -87,18 +85,13 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 <script>
 const Q = new URLSearchParams(location.search);
 const RAWJ = (Q.get('j') || '').trim();
-// Each CV job has its own page, keyed by its full job name ("J1093 - 62 Florizel St - Kitchen" ->
-// j1093-62-florizel-st-kitchen), so separate CV jobs under one J number never overwrite each other.
-// Older pages were keyed by the J number only, so that is tried second.
-const slug = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+// Job names start with the job number (e.g. "J1093 - 62 Smith St - Kitchen"); only that number is used,
+// so addresses never end up in file names. Falls back to the whole name if there's no number.
+// job key: the J number anywhere in the job name (J1100), otherwise the whole job name
 const NUM = RAWJ.match(/(?:^|[^A-Za-z0-9])(J\d{3,})(?!\d)/i);
-const KEYS = [...new Set([slug(RAWJ), NUM ? slug(NUM[1]) : ''].filter(Boolean))];
-(async () => {
-  for (const k of KEYS){
-    try { const r = await fetch('jobs/' + encodeURIComponent(k) + '.json'); if (r.ok) return start(await r.json()); } catch (_) {}
-  }
-  document.getElementById('pname').textContent = 'Job not found'; document.getElementById('pwhere').textContent = 'Rescan the label, or check the job has been uploaded.';
-})();
+const KEY = (NUM ? NUM[1] : RAWJ).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+fetch('jobs/' + encodeURIComponent(KEY) + '.json').then(r => { if (!r.ok) throw 0; return r.json(); })
+  .then(start).catch(() => { document.getElementById('pname').textContent = 'Job not found'; document.getElementById('pwhere').textContent = 'Rescan the label, or check the job has been uploaded.'; });
 function start(JOB){
 const $ = id => document.getElementById(id);
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -119,33 +112,17 @@ controls.rotateSpeed = 0.55;
 controls.zoomSpeed = 0.6;
 controls.panSpeed = 0.6;
 controls.screenSpacePanning = true;
-// light mostly comes from the viewer (a lamp on the camera), so the faces you look at are the brightest and
-// thin edges / route bevels turned toward a fixed sun don't glow white
-scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8178, 0.5));
-const sun = new THREE.DirectionalLight(0xffffff, 0.15); sun.position.set(1500, 3000, 2500); scene.add(sun);
-const headlamp = new THREE.DirectionalLight(0xffffff, 0.6); headlamp.position.set(0.3, 0.5, 1);
-camera.add(headlamp); headlamp.target.position.set(0, 0, -1); camera.add(headlamp.target); scene.add(camera);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8178, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(1500, 3000, 2500); scene.add(sun);
 
 // ---- materials (v2 files carry real CV materials + textures; v1 files get plain board colour) ----
 const loader = new THREE.TextureLoader();
-const texCache = {}, texUsers = {}, texVariants = {};
-// One GPU texture per image (plus one per different repeat). Cloning per mesh uploaded the same image
-// hundreds of times - fine on a PC, but it ran phones out of graphics memory and crashed the page.
-function textureAt(file, rx, ry){
-  const base = texture(file);
-  if (Math.abs(rx - 1) < 1e-6 && Math.abs(ry - 1) < 1e-6) return base;
-  const key = file + '|' + rx.toFixed(5) + '|' + ry.toFixed(5);
-  if (!texCache[key]){
-    const v = base.clone(); v.repeat.set(rx, ry); v.needsUpdate = true;
-    (texVariants[file] = texVariants[file] || []).push(v); texCache[key] = v;
-  }
-  return texCache[key];
-}
+const texCache = {}, texUsers = {};
 function texture(file){
   if (!texCache[file]){
     texUsers[file] = [];
     const t = loader.load('textures/' + encodeURIComponent(file),
-      img => { (texVariants[file] || []).forEach(v => { v.image = t.image; v.needsUpdate = true; }); texUsers[file].forEach(m => { m.needsUpdate = true; }); },
+      img => texUsers[file].forEach(m => { if (m.map){ m.map.image = t.image; m.map.needsUpdate = true; } m.needsUpdate = true; }),
       undefined,
       () => texUsers[file].forEach(m => { m.map = null; m.color.copy(m.userData.fallback); m.userData.base.copy(m.userData.fallback); m.needsUpdate = true; }));
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
@@ -159,8 +136,9 @@ function realMaterial(mi){
   const d = MATS[mi];
   const mat = new THREE.MeshLambertMaterial({side:THREE.DoubleSide, transparent:true, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1});
   if (d && d.t){
-    // v2 UVs are already in real-size repeats; v1 needs the material's tile size
-    const t = JOB.v >= 2 ? textureAt(d.t, 1, 1) : textureAt(d.t, 1 / (d.s[0] || 24), 1 / (d.s[1] || 24));
+    const base = texture(d.t);
+    const t = base.clone();                                   // own repeat per material, same image
+    if (!(JOB.v >= 2)) t.repeat.set(1 / (d.s[0] || 24), 1 / (d.s[1] || 24));   // v2 UVs are already in real-size repeats
     mat.map = t; mat.color.set(0xffffff);
     mat.userData.fallback = d.c.clone();
     texUsers[d.t].push(mat);
@@ -274,39 +252,14 @@ function moveStep(){
     mv.pivot.position.copy(mv.P).addScaledVector(off, ex);
     if (mv.m.t === 'drawer') mv.pivot.position.addScaledVector(mv.n, mv.k * mv.travel);
   }
-  // hinge arms: plate end stays on the cabinet, the other end follows the door's cup
-  for (const a of arms){
-    if (!a.mv.moved && !a.first) continue;
-    a.first = false;
-    const cupNow = a.cup.clone().sub(a.mv.P).applyQuaternion(a.mv.pivot.quaternion).add(a.mv.P);
-    const dir = cupNow.sub(a.plate); const len = dir.length(); if (len < 1) continue;
-    a.pivot.quaternion.setFromUnitVectors(a.dir0, dir.normalize());
-    a.pivot.scale.set(1, 1, 1); a.pivot.scale[a.ax] = Math.max(0.6, Math.min(1.8, len / a.len0));   // arm spans plate to cup
-  }
   if (exDirty){
     for (const x of parts.concat(hardware)){
-      if (x.mover || x.arm) continue;
+      if (x.mover) continue;
       const off = x.off || ZERO;
       for (const ob of x.meshes.concat(x.edges)) ob.position.copy(off).multiplyScalar(ex);
     }
     exDirty = false;
   }
-}
-const arms = [];
-for (const mv of movers) for (const pair of (mv.m.arms || [])){
-  const [k, cupK] = Array.isArray(pair) ? pair : [pair, -1];
-  const h = hardware[k]; if (!h) continue;
-  const size = h.box.getSize(new THREE.Vector3()), c = h.box.getCenter(new THREE.Vector3());
-  const ax = size.x >= size.y && size.x >= size.z ? 'x' : size.y >= size.z ? 'y' : 'z';
-  const e1 = c.clone(), e2 = c.clone(); e1[ax] -= size[ax] / 2; e2[ax] += size[ax] / 2;
-  // the arm's cabinet end stays put; its other end reaches for the hinge cup on the door
-  const target = cupK >= 0 && hardware[cupK] ? hardware[cupK].box.getCenter(new THREE.Vector3()) : parts[mv.m.f].box.getCenter(new THREE.Vector3());
-  const cup = e1.distanceTo(target) < e2.distanceTo(target) ? e1 : e2, plate = cup === e1 ? e2 : e1;
-  const reach = cupK >= 0 && hardware[cupK] ? target : cup;
-  const pivot = new THREE.Object3D(); pivot.position.copy(plate); scene.add(pivot);
-  for (const ob of h.meshes.concat(h.edges)){ scene.remove(ob); ob.position.sub(plate); pivot.add(ob); }
-  const a = {mv, h, pivot, plate, cup: reach, dir0: cup.clone().sub(plate).normalize(), len0: cup.distanceTo(plate), ax, first: true};
-  h.arm = a; arms.push(a);
 }
 for (const mv of movers){
   mv.front = parts[mv.m.f]; mv.inners = [];
@@ -348,7 +301,7 @@ function setLook(x, opacity, edgeColor, edgeOpacity, tint){
     mat.emissive.copy(tint || new THREE.Color(0)); mat.userData.glow = !!tint;
     m.renderOrder = opacity > .9 ? 2 : 1;
   }
-  for (const e of x.edges){ e.material.color.copy(edgeColor); e.material.opacity = edgeOpacity; e.material.visible = edgeOpacity > 0; }
+  for (const e of x.edges){ e.material.color.copy(edgeColor); e.material.opacity = edgeOpacity; }
 }
 function paint(){
   const c = n => new THREE.Color(css(n));
@@ -358,14 +311,14 @@ function paint(){
   if (iso !== null){                       // isolated cabinet: solid, or see-through wireframe
     for (const x of parts){
       if (x === sel) setLook(x, 1, hi, 1, hi);
-      else if (isoSolid) setLook(x, 1, edge, 0);
+      else if (isoSolid) setLook(x, 1, edge, .2);
       else setLook(x, .18, edge, .85);
     }
-    for (const h of hardware) if (h.p.k !== 'wall') isoSolid ? setLook(h, 1, edge, 0) : setLook(h, .15, edge, .6);
+    for (const h of hardware) if (h.p.k !== 'wall') isoSolid ? setLook(h, 1, edge, .2) : setLook(h, .15, edge, .6);
     return;
   }
   for (const x of parts){
-    if (solid) setLook(x, 1, x === sel ? hi : edge, x === sel ? 1 : 0, x === sel ? hi : null);   // solid: no outline lines
+    if (solid) setLook(x, 1, x === sel ? hi : edge, x === sel ? 1 : .12, x === sel ? hi : null);
     else if (!sel) setLook(x, 1, edge, .35);
     else if (x === sel) setLook(x, 1, hi, 1, hi);
     else if (x.p.g === sel.p.g) setLook(x, .3, edge, .5);
@@ -374,7 +327,7 @@ function paint(){
   for (const h of hardware){
     if (h.p.k === 'wall'){ for (const m of h.meshes) m.material.opacity = h.fade; continue; }
     const near = sel && h.p.g === sel.p.g;
-    if (solid) setLook(h, 1, edge, 0);
+    if (solid) setLook(h, 1, edge, .12);
     else setLook(h, !sel ? 1 : near ? .3 : .05, edge, !sel ? .35 : near ? .4 : .05);
   }
 }
@@ -433,8 +386,9 @@ function applyFinish(label, choice){
     if (!choice){ mat.map = ud.orig.map; ud.base.copy(ud.orig.base); }
     else if (choice.startsWith('tex:')){
       const src = MATS[m.userData.mi], d = MATS[+choice.slice(4)];
+      const t = texture(d.t).clone(); t.needsUpdate = true;
       const sx = (src && src.t ? src.s[0] : 24) / (d.s[0] || 24), sy = (src && src.t ? src.s[1] : 24) / (d.s[1] || 24);
-      const t = JOB.v >= 2 ? textureAt(d.t, sx, sy) : textureAt(d.t, 1 / (d.s[0] || 24), 1 / (d.s[1] || 24));
+      t.repeat.set(JOB.v >= 2 ? sx : 1 / (d.s[0] || 24), JOB.v >= 2 ? sy : 1 / (d.s[1] || 24));
       mat.map = t; texUsers[d.t].push(mat); ud.base.set(0xffffff);
     } else { mat.map = null; ud.base.set(choice); }
     mat.color.copy(ud.base); mat.needsUpdate = true;
@@ -618,21 +572,13 @@ function cabFront(cab){
   if (dir.length() > 0.1){ const ctr = boxOf(cab).getCenter(new THREE.Vector3()); const p = ctr.clone().addScaledVector(dir.normalize(), 1000); p.y = c.y; return p; }
   return c;
 }
-// the side of the job the doors and drawers face, so the whole-job view opens on the kitchen's face
-function jobFront(){
-  const n = new THREE.Vector3();
-  for (const mv of movers) if (!mv.m.inner && !mv.parentMv) n.add(mv.n);
-  n.y = 0; if (n.length() < 0.1) return null;
-  const c = boxOf(parts).getCenter(new THREE.Vector3());
-  return c.addScaledVector(n.normalize(), 1000);
-}
 function reframe(){
   if (iso !== null){
     const cab = parts.filter(x => x.p.g === iso);
     frame(boxOf(cab.concat(hardware.filter(h => h.p.g === iso))), exTarget ? 1.5 : 0.85, cabFront(cab));
     return;
   }
-  if (view === 'job' || !sel) frame(boxOf(parts), 1.02, jobFront());
+  if (view === 'job' || !sel) frame(boxOf(parts));
   else {
     const cab = parts.filter(x => x.p.g === sel.p.g);
     const fronts = cab.filter(x => /DSLAB|DOOR|DF/i.test(x.p.code || ''));
@@ -683,9 +629,7 @@ function isolate(g){
   for (const x of parts.concat(hardware)) x.off = null;
   if (g !== null){
     const cc = boxOf(items).getCenter(new THREE.Vector3());
-    // explode the cabinet's own parts only; appliances, hinges and other hardware stay put
-    // (hardware on a door or drawer still travels with it)
-    for (const x of items) x.off = parts.includes(x) ? x.box.getCenter(new THREE.Vector3()).sub(cc).multiplyScalar(0.9) : null;
+    for (const x of items) x.off = x.box.getCenter(new THREE.Vector3()).sub(cc).multiplyScalar(0.9);
     const named = parts.find(x => x.p.g === g && x.p.cabNo);
     const no = cabNoOf(g);
     $('room').textContent = named ? 'Cab ' + named.p.cabNo + ' · ' + named.p.cabName : no ? 'Cab ' + no : 'Cabinet';
@@ -696,7 +640,7 @@ function isolate(g){
   $('vCab').hidden = on; $('vJob').hidden = on; $('vSee').hidden = !on;
   isoSolid = true; $('vSee').setAttribute('aria-pressed', false);
   $('vSolid').hidden = on;
-  $('vExplode').hidden = !on; $('vBack').hidden = !on; $('vPrev').hidden = !on; $('vNext').hidden = !on;
+  $('vExplode').hidden = !on; $('vBack').hidden = !on;
   $('vExplode').setAttribute('aria-pressed', false); $('vExplode').textContent = 'Explode';
   $('card').hidden = on;
   hintText(); paint();
@@ -706,20 +650,6 @@ function isolate(g){
 $('vExplode').onclick = () => { exTarget = exTarget ? 0 : 1; $('vExplode').setAttribute('aria-pressed', !!exTarget);
   $('vExplode').textContent = exTarget ? 'Put back' : 'Explode'; reframe(); };
 $('vSee').onclick = () => { isoSolid = !isoSolid; $('vSee').setAttribute('aria-pressed', !isoSolid); paint(); };
-// step through cabinets in cabinet-number order (cabinets with no number follow, in model order)
-function cabOrder(){
-  const gs = [...new Set(parts.map(x => x.p.g))].filter(g => g >= 0);
-  const num = g => { const n = parseInt(cabNoOf(g), 10); return isNaN(n) ? 1e9 + g : n; };
-  return gs.sort((a, b) => num(a) - num(b));
-}
-function stepCab(d){
-  if (iso === null) return;
-  const order = cabOrder(), i = order.indexOf(iso);
-  for (const mv of movers) mv.target = 0;
-  isolate(order[(i + d + order.length) % order.length]);
-}
-$('vPrev').onclick = () => stepCab(-1);
-$('vNext').onclick = () => stepCab(1);
 $('vBack').onclick = () => { for (const mv of movers) mv.target = 0; isolate(null); };
 $('vCab').onclick = () => setView('cab');
 $('vJob').onclick = () => setView('job');
