@@ -442,27 +442,47 @@ const movers = (JOB.movers || []).map(m => {
   const mv = {m, pivot, P, k: 0, target: 0, axis: m.d ? new THREE.Vector3(m.d[0], m.d[1], m.d[2]) : null,
     n: new THREE.Vector3(m.n[0], m.n[1], m.n[2])};
   for (const o of objs) o.mover = mv;
+  // pocket door carrier (Revego hinge side): slides into the pocket with the door but never turns
+  if (m.carry && m.carry.length){
+    mv.carryPivot = new THREE.Object3D(); scene.add(mv.carryPivot);
+    for (const i of m.carry){ const h = hardware[i]; if (!h) continue;
+      for (const ob of h.meshes.concat(h.edges)){ scene.remove(ob); mv.carryPivot.add(ob); } h.mover = mv; }
+  }
   return mv;
 });
 const arms = [];                         // hinge arms, set up below
 // explode: each piece of the isolated cabinet moves away from the cabinet centre
 let ex = 0, exTarget = 0, exDirty = false;
 const ZERO = new THREE.Vector3();
+const POCKET_SECONDS = 1.25;                // a pocket door's whole move (turn, then slide in)
+const ease = t => t * t * (3 - 2 * t);
+let lastStep = performance.now();
 function moveStep(){
+  const now = performance.now(), dt = Math.min(0.1, (now - lastStep) / 1000); lastStep = now;
   if (Math.abs(exTarget - ex) > 0.001){ ex += (exTarget - ex) * (still ? 1 : 0.12); exDirty = true; }
   else if (ex !== exTarget){ ex = exTarget; exDirty = true; }
   for (const mv of movers){
     const moving = Math.abs(mv.target - mv.k) > 0.001;
-    if (moving) mv.k += (mv.target - mv.k) * (still ? 1 : 0.14);
+    if (moving){
+      if (mv.m.slide == null) mv.k += (mv.target - mv.k) * (still ? 1 : 0.14);
+      else {                                // pocket doors move at a steady pace, then settle
+        const step = still ? 1 : dt / POCKET_SECONDS;
+        mv.k = mv.target > mv.k ? Math.min(mv.target, mv.k + step) : Math.max(mv.target, mv.k - step);
+      }
+    }
     mv.moved = moving;
     if (!moving && !exDirty) continue;
     // pocket doors (m.slide): first half of the move turns the door, second half slides it back into the pocket
-    const turn = mv.m.slide != null ? Math.min(1, mv.k * 2) : mv.k;
+    const turn = mv.m.slide != null ? ease(Math.min(1, mv.k * 2)) : mv.k;
     if (mv.m.t === 'door') mv.pivot.quaternion.setFromAxisAngle(mv.axis, turn * (mv.m.a != null ? mv.m.a : 110) * Math.PI / 180);
     const off = mv.parentMv ? ZERO : (mv.front && mv.front.off) || ZERO;
     mv.pivot.position.copy(mv.P).addScaledVector(off, ex);
     if (mv.m.t === 'drawer') mv.pivot.position.addScaledVector(mv.n, mv.k * mv.travel);
-    if (mv.m.slide) mv.pivot.position.addScaledVector(mv.n, -Math.max(0, mv.k * 2 - 1) * mv.m.slide);
+    if (mv.m.slide){
+      const back = ease(Math.max(0, mv.k * 2 - 1)) * mv.m.slide;
+      mv.pivot.position.addScaledVector(mv.n, -back);
+      if (mv.carryPivot) mv.carryPivot.position.copy(mv.n).multiplyScalar(-back);
+    }
   }
   // hinge arms: plate end stays on the cabinet, the other end follows the door's cup
   for (const a of arms){
