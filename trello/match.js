@@ -21,18 +21,31 @@
     return n;
   }
 
-  // Every job that could be this card, best first. A job whose number
-  // disagrees with the card's number is never a candidate.
+  // Room part of a card name: everything after "J#### - <client/address> -".
+  // "J1081 - 61 Howitt Rd - Silcon - Powder" -> "Silcon - Powder". Empty when the
+  // card is one-per-job ("J974 - Cathy & John Bain 10 Morris Rd").
+  function roomWords(cardName) {
+    var segs = String(cardName || "").split(/\s+-\s+/);
+    return segs.length > 2 ? words(segs.slice(2).join(" ")) : [];
+  }
+
+  // Every job that could be this card, best first. Never a candidate:
+  // - a job whose number disagrees with the card's number;
+  // - a same-number job for a different room (the card names a room and it
+  //   shares no word with the job's room), so a Powder card never gets the
+  //   Laundry model just because they are both J1081.
   function rank(cardName, jobs) {
     var num = jobNumber(cardName);
     var cw = words(cardName);
+    var cr = roomWords(cardName);
     return (jobs || []).map(function (j) {
       var jn = String(j.number || jobNumber(j.name)).toUpperCase();
       var ov = overlap(cw, words((j.name || "") + " " + (j.room || "")));
+      var otherRoom = !!num && jn === num && !!j.room && cr.length > 0 && overlap(cr, words(j.room)) === 0;
       return {
         job: j,
         numHit: !!num && jn === num,
-        clash: !!num && !!jn && jn !== num,
+        clash: (!!num && !!jn && jn !== num) || otherRoom,
         overlap: ov,
         score: (num && jn === num ? 100 : 0) + ov,
       };
@@ -92,7 +105,7 @@
     return out.length > DESC_MAX ? null : out;
   }
 
-  var api = { match: match, resolve: resolve, withLink: withLink, linkLine: linkLine, rank: rank, jobNumber: jobNumber, words: words };
+  var api = { roomWords: roomWords, match: match, resolve: resolve, withLink: withLink, linkLine: linkLine, rank: rank, jobNumber: jobNumber, words: words };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.PFMatch = api;
 })(this);
