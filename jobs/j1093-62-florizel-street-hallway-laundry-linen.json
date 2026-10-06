@@ -17,6 +17,11 @@
    "ids": "287-328,331-344,346-368,370-400,402-404"
   },
   {
+   "room": "Hallway Laundry & Linen",
+   "key": "j1093-62-florizel-street-hallway-laundry-linen-hallway-laundry-linen",
+   "ids": "1-26,28-94,97-105,107-115"
+  },
+  {
    "room": "Master Vanity",
    "key": "j1093-62-florizel-street-hallway-laundry-linen-master-vanity",
    "ids": "233-262"
