@@ -1,4 +1,5 @@
 /* Part Finder 3D – connector. Only file that calls initialize(). */
+var APP_KEY = "8b843778d4d799d1f5fe1d7a0db89b0b"; // Trello API keys are public by design
 var ICON = new URL("./icon.svg", window.location.href).href;          // white: card buttons
 var ICON_DARK = new URL("./icon-dark.svg", window.location.href).href; // grey: card-back heading
 var INDEX = new URL("../jobs/index.json", window.location.href);
@@ -69,4 +70,4 @@ TrelloPowerUp.initialize({
     return [{ icon: ICON, text: "3D View", callback: openViewer, condition: "always" }];
   },
   "card-back-section": cardBackSection,
-}, { appName: "Part Finder 3D" });
+}, { appKey: APP_KEY, appName: "Part Finder 3D" });

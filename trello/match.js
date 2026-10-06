@@ -70,7 +70,29 @@
     };
   }
 
-  var api = { match: match, resolve: resolve, rank: rank, jobNumber: jobNumber, words: words };
+  // The one description line this Power-Up owns. Recognised by its link target,
+  // so a renamed job or a changed pick replaces it rather than adding another.
+  var DESC_MAX = 16384;
+  function linkLine(job, viewerBase) {
+    var label = ("3D View: " + job.name + (job.room ? " (" + job.room + ")" : "")).replace(/[\[\]]/g, "");
+    return "**[" + label + "](" + viewerBase + "?j=" + encodeURIComponent(job.key) + ")**";
+  }
+  // New description, the same string if nothing needs to change, or null if
+  // the result would not fit in a Trello description.
+  function withLink(desc, job, viewerBase) {
+    desc = desc || "";
+    var line = linkLine(job, viewerBase);
+    var marker = "](" + viewerBase + "?j=";
+    var lines = desc.split("\n");
+    var i = -1;
+    for (var k = 0; k < lines.length; k++) if (lines[k].indexOf(marker) !== -1) { i = k; break; }
+    var out;
+    if (i >= 0) { lines[i] = line; out = lines.join("\n"); }
+    else out = desc.trim() ? line + "\n\n" + desc : line;
+    return out.length > DESC_MAX ? null : out;
+  }
+
+  var api = { match: match, resolve: resolve, withLink: withLink, linkLine: linkLine, rank: rank, jobNumber: jobNumber, words: words };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.PFMatch = api;
 })(this);
