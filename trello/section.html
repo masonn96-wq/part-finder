@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>3D View panel</title>
 <script src="https://p.trellocdn.com/power-up.min.js"></script>
+<script src="./keys.js"></script>
 <script src="./match.js"></script>
 <style>
   :root { color-scheme: light; --ink:#172b4d; --mute:#5e6c84; --line:#dfe1e6; --bg:#f4f5f7; --warn:#a54800; }
@@ -42,7 +43,8 @@
 <div class="stage" id="stage"><div class="msg">Loading…</div></div>
 
 <script>
-var APP_KEY = "8b843778d4d799d1f5fe1d7a0db89b0b"; // public by design; the per-user token never leaves Trello's secret store
+// Board id comes in the query string so the key is known before the client is created.
+var APP_KEY = PFKeys.appKeyFor(new URLSearchParams(location.search).get("b") || "");
 var t = TrelloPowerUp.iframe({ appKey: APP_KEY, appName: "Part Finder 3D" });
 var API = "https://api.trello.com/1";
 var ctx = {}; try { ctx = t.getContext() || {}; } catch (e) {}

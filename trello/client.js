@@ -1,5 +1,4 @@
 /* Part Finder 3D – connector. Only file that calls initialize(). */
-var APP_KEY = "8b843778d4d799d1f5fe1d7a0db89b0b"; // Trello API keys are public by design
 var ICON = new URL("./icon.svg", window.location.href).href;          // white: card buttons
 var ICON_DARK = new URL("./icon-dark.svg", window.location.href).href; // grey: card-back heading
 var INDEX = new URL("../jobs/index.json", window.location.href);
@@ -46,11 +45,13 @@ function openViewer(t) {
 // the board stays clean; the card button still lets you pick one by hand.
 function cardBackSection(t) {
   return Promise.all([
-    t.card("name").catch(function () { return null; }),
+    t.card("name", "idBoard").catch(function () { return null; }),
     t.get("card", "shared", "pfJob").catch(function () { return null; }),
     getJobs().catch(function () { return null; }),
   ]).then(function (r) {
     var name = (r[0] && r[0].name) || "";
+    var ctx = {}; try { ctx = t.getContext() || {}; } catch (e) {}
+    var board = (r[0] && r[0].idBoard) || ctx.board || "";
     var jobs = r[2];
     if (jobs) {
       var res = PFMatch.resolve(name, jobs, r[1] || "");
@@ -60,7 +61,7 @@ function cardBackSection(t) {
     return {
       title: "3D View",
       icon: ICON_DARK,
-      content: { type: "iframe", url: t.signUrl("./section.html", { cardName: name }), height: 500 },
+      content: { type: "iframe", url: t.signUrl("./section.html?b=" + encodeURIComponent(board), { cardName: name }), height: 500 },
     };
   }).catch(function () { return null; });
 }
@@ -70,4 +71,4 @@ TrelloPowerUp.initialize({
     return [{ icon: ICON, text: "3D View", callback: openViewer, condition: "always" }];
   },
   "card-back-section": cardBackSection,
-}, { appKey: APP_KEY, appName: "Part Finder 3D" });
+}, { appKey: PFKeys.MAIN_KEY, appName: "Part Finder 3D" }); // connector makes no REST calls
