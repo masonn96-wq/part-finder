@@ -44,7 +44,9 @@
 
 <script>
 // Board id comes in the query string so the key is known before the client is created.
-var APP_KEY = PFKeys.appKeyFor(new URLSearchParams(location.search).get("b") || "");
+var APP_KEY = (typeof PFKeys !== "undefined") ? PFKeys.appKeyFor(new URLSearchParams(location.search).get("b") || "")
+  : "704e82fa29aaf32f15335d5d929c6b9b";
+try { console.log("[PF3D] panel v4", "keys:" + (typeof PFKeys), "match:" + (typeof PFMatch)); } catch (e) {}
 var t = TrelloPowerUp.iframe({ appKey: APP_KEY, appName: "Part Finder 3D" });
 var API = "https://api.trello.com/1";
 var ctx = {}; try { ctx = t.getContext() || {}; } catch (e) {}

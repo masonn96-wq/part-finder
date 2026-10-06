@@ -2,6 +2,9 @@
 var ICON = new URL("./icon.svg", window.location.href).href;          // white: card buttons
 var ICON_DARK = new URL("./icon-dark.svg", window.location.href).href; // grey: card-back heading
 var INDEX = new URL("../jobs/index.json", window.location.href);
+// Never depend on load order: a cached index.html may not load keys.js / match.js.
+var MAIN_KEY = (typeof PFKeys !== "undefined" && PFKeys.MAIN_KEY) || "704e82fa29aaf32f15335d5d929c6b9b";
+try { console.log("[PF3D] connector v4", "keys:" + (typeof PFKeys), "match:" + (typeof PFMatch)); } catch (e) {}
 
 function fail(t, what, err) {
   return t.alert({ message: what + ": " + ((err && err.message) || err), duration: 12, display: "error" });
@@ -53,7 +56,7 @@ function cardBackSection(t) {
     var ctx = {}; try { ctx = t.getContext() || {}; } catch (e) {}
     var board = (r[0] && r[0].idBoard) || ctx.board || "";
     var jobs = r[2];
-    if (jobs) {
+    if (jobs && typeof PFMatch !== "undefined") {
       var res = PFMatch.resolve(name, jobs, r[1] || "");
       if (!res.job) return null;
     }
@@ -63,7 +66,7 @@ function cardBackSection(t) {
       icon: ICON_DARK,
       content: { type: "iframe", url: t.signUrl("./section.html?b=" + encodeURIComponent(board), { cardName: name }), height: 500 },
     };
-  }).catch(function () { return null; });
+  }).catch(function (e) { try { console.error("[PF3D] card-back-section", e); } catch (x) {} return null; });
 }
 
 TrelloPowerUp.initialize({
@@ -71,4 +74,4 @@ TrelloPowerUp.initialize({
     return [{ icon: ICON, text: "3D View", callback: openViewer, condition: "always" }];
   },
   "card-back-section": cardBackSection,
-}, { appKey: PFKeys.MAIN_KEY, appName: "Part Finder 3D" }); // connector makes no REST calls
+}, { appKey: MAIN_KEY, appName: "Part Finder 3D" }); // connector makes no REST calls
