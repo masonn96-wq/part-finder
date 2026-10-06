@@ -36,6 +36,26 @@ eq("resolve: missing pin is reported", M.resolve("J974 - Bain", jobs, "gone").pi
 eq("resolve: no pin, no match -> null", M.resolve("J279 - Testing", jobs, "").job, null);
 eq("real card name", key("J974 - Cathy & John Bain 10 Morris Rd Upper Beaconsfield - Kitchen"), "j974-cathy-john-bain");
 
+// Real 3 - Factory card names, 6 Oct 2026. Only one room per job has a 3D model.
+var factory = {
+  "J974 - Cathy & John Bain 10 Morris Rd Upper Beaconsfield - Kitchen": "j974-cathy-john-bain",
+  "J1093 - Veronica Podhorodecki 62 Florizel Street, Glen Iris - Kitchen - Laundry/Pantry": "j1093-62-florizel-street-kitchen-pantry",
+  "J1093 - Veronica Podhorodecki 62 Florizel Street, Glen Iris - Bed 1+4 Robes": null,
+  "J1093 - Veronica Podhorodecki 62 Florizel Street, Glen Iris - Vanity's": null,
+  "J1093 - Veronica Podhorodecki 62 Florizel Street, Glen Iris - Hallway/Linen": null,
+  "J1081 - 61 Howitt Rd - Silcon - Laundry": "j1081-61-howitt-laundry",
+  "J1081 - 61 Howitt Rd - Silcon - Powder": null,
+  "J1081 - 61 Howitt Rd - Silcon - Meditation Joinery": null,
+  "J1081 - 61 Howitt Rd - Silcon - Pilates / Gym Joinery": null,
+  "J1081 - 61 Howitt Rd - Silcon - Red Light Therapy Room": null,
+  "J1081 - 61 Howitt Rd - Silcon - Seat Outside Sauna": null,
+  "J1103 - AusStyle  - Rue De Gare Units - Unit 3 - Kitchen Pantry Laundry & Vanities": null,
+  "Cecil kitchen flat pack - Kitchen": null,
+  "J974 - Cathy & John Bain 10 Morris Rd Upper Beaconsfield": "j974-cathy-john-bain",
+};
+Object.keys(factory).forEach(function (n) { eq("factory: " + n.slice(0, 58), key(n), factory[n]); });
+eq("other-room job is not even offered as likely", M.match("J1081 - 61 Howitt Rd - Silcon - Powder", jobs).candidates.length, 0);
+
 var V = "https://masonn96-wq.github.io/part-finder/";
 var bain = jobs[1], andy = jobs[3];
 var live = "**[3D View: J974 - Cathy & John Bain (Kitchen)](https://masonn96-wq.github.io/part-finder/?j=j974-cathy-john-bain)**";
