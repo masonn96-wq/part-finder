@@ -36,5 +36,18 @@ eq("resolve: missing pin is reported", M.resolve("J974 - Bain", jobs, "gone").pi
 eq("resolve: no pin, no match -> null", M.resolve("J279 - Testing", jobs, "").job, null);
 eq("real card name", key("J974 - Cathy & John Bain 10 Morris Rd Upper Beaconsfield - Kitchen"), "j974-cathy-john-bain");
 
+var V = "https://masonn96-wq.github.io/part-finder/";
+var bain = jobs[1], andy = jobs[3];
+var live = "**[3D View: J974 - Cathy & John Bain (Kitchen)](https://masonn96-wq.github.io/part-finder/?j=j974-cathy-john-bain)**";
+eq("link: line already on the J974 card is recognised as current", M.withLink(live, bain, V), live);
+eq("link: empty description", M.withLink("", bain, V), live);
+eq("link: goes on top, existing text kept", M.withLink("Benchtops 20mm\nT bar handles", bain, V), live + "\n\nBenchtops 20mm\nT bar handles");
+var swapped = M.withLink("Notes\n" + live + "\nMore", andy, V);
+eq("link: changed job replaces the line in place", swapped, "Notes\n" + M.linkLine(andy, V) + "\nMore");
+eq("link: never two link lines", (swapped.match(/part-finder\/\?j=/g) || []).length, 1);
+eq("link: brackets in a job name can't break the link", M.linkLine({ key: "k", name: "J1 [A]", room: "" }, V), "**[3D View: J1 A](" + V + "?j=k)**");
+eq("link: refuses to overflow 16384", M.withLink(new Array(16380).join("x"), bain, V), null);
+eq("link: other links left alone", M.withLink("[plans](https://example.com/a)", bain, V), live + "\n\n[plans](https://example.com/a)");
+
 console.log(fail ? fail + " FAILED" : "all passed");
 process.exit(fail ? 1 : 0);
