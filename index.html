@@ -257,7 +257,7 @@ async function home(filter){
   const load = async k => { try { const r = await fetch('jobs/' + encodeURIComponent(k) + '.json'); if (r.ok) return await r.json(); } catch (_) {} return null; };
   // 1. the full CV job name (sticker QRs)
   let job = null;
-  if (!(NUM && slug(RAWJ) === slug(NUM[1])) && (job = await load(slug(RAWJ)))) return start(job);
+  if (!(NUM && slug(RAWJ) === slug(NUM[1])) && (job = await load(slug(RAWJ)))) return job.rooms ? openRoom(job) : start(job);
   // 2. just the job number (e.g. the QR on the shop drawings: ?j=J974): look it up in the job list. One CV job
   //    with that number opens straight away; several (kitchen, laundry...) show the list for that number.
   if (NUM){
@@ -270,6 +270,20 @@ async function home(filter){
   $('pname').textContent = 'Job not found';
   $('pwhere').innerHTML = 'Rescan the label, or <a href="./">pick the job from the list</a>.';
 })();
+// A CV job with several rooms nested together is published one page per room; the job's own file is then just
+// its room list ({job, rooms: [{room, key, ids: "1-40,52"}]}). A sticker (job name + part number) opens the room
+// that part is in; no part number, or one in no room (or several), lists the rooms.
+async function openRoom(list){
+  const p = (Q.get('p') || decodeURIComponent(location.hash.slice(1))).replace(/^p/i, '').trim();
+  const has = (ids, id) => String(ids || '').split(',').some(r => {
+    const [a, b] = r.split('-'); return b === undefined ? r === id : /^\d+$/.test(id) && +id >= +a && +id <= +b; });
+  const hits = list.rooms.filter(r => p ? has(r.ids, p) : list.rooms.length === 1);
+  if (hits.length === 1){
+    const r = await fetch('jobs/' + encodeURIComponent(hits[0].key) + '.json').catch(() => null);
+    if (r && r.ok) return start(await r.json());
+  }
+  return home(list.job);
+}
 // ---- the 3D view of one job ----
 function start(JOB){
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();

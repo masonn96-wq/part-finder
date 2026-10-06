@@ -1,0 +1,25 @@
+{
+ "job": "J1093 - 62 Florizel Street - Hallway Laundry-Linen",
+ "rooms": [
+  {
+   "room": "Bathroom Vanity",
+   "key": "j1093-62-florizel-street-hallway-laundry-linen-bathroom-vanity",
+   "ids": "265-269,272-286"
+  },
+  {
+   "room": "Bed 1 Robe",
+   "key": "j1093-62-florizel-street-hallway-laundry-linen-bed-1-robe",
+   "ids": "116-157,160-173,175-197,199-229,231-232,405"
+  },
+  {
+   "room": "Bed 4 Robe",
+   "key": "j1093-62-florizel-street-hallway-laundry-linen-bed-4-robe",
+   "ids": "287-328,331-344,346-368,370-400,402-404"
+  },
+  {
+   "room": "Master Vanity",
+   "key": "j1093-62-florizel-street-hallway-laundry-linen-master-vanity",
+   "ids": "233-262"
+  }
+ ]
+}
