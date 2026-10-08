@@ -93,6 +93,27 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 .scan p{position:absolute;left:16px;right:16px;bottom:calc(84px + env(safe-area-inset-bottom,0px));margin:0;text-align:center;color:#fff;font:600 17px var(--display);text-shadow:0 1px 3px #000}
 .scan button{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(24px + env(safe-area-inset-bottom,0px));font:600 16px var(--display);padding:12px 28px;border-radius:8px;border:0;background:#fff;color:#111;cursor:pointer}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+/* measure + section */
+.views button#vMeasure[aria-pressed="true"],.views button#vSection[aria-pressed="true"]{background:var(--hi);border-color:var(--hi);color:var(--hi-ink)}
+.mpanel,.spanel{position:absolute;left:12px;bottom:12px;width:min(360px,calc(100% - 24px));background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:2;font-size:14px}
+.mpanel .mh,.spanel .mh{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px}
+.mpanel .mh b,.spanel .mh b{font-size:16px}
+.mpanel button,.spanel button{font:500 13px var(--display);padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer;min-height:32px}
+.mtotal{font:600 26px var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.mtotal small{font-size:14px;color:var(--muted);font-weight:500}
+.maxes{display:flex;flex-wrap:wrap;gap:4px 14px;font:500 13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;margin:2px 0 6px}
+.maxes b{color:var(--fg);font-weight:600}
+.msnap{font-size:12px;color:var(--muted);min-height:1.3em}
+.mrow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px}
+.mrow label{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);margin-right:auto}
+.mrow input{accent-color:var(--hi);width:18px;height:18px}
+.mlist{list-style:none;margin:6px 0 0;padding:6px 0 0;border-top:1px dashed var(--line);max-height:96px;overflow:auto;font:500 12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.mlist li{padding:2px 0}
+.mlist b{color:var(--fg)}
+.srow{display:grid;grid-template-columns:88px 1fr auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.srow span{font-size:13px}
+.srow output{grid-column:2;font:500 12px var(--mono);color:var(--muted);margin-top:-6px}
+.srow input[type=range]{width:100%;accent-color:var(--hi)}
 </style>
 
 </head><body>
@@ -120,8 +141,24 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
     <button id="vNext" hidden title="Next cabinet">Next &rsaquo;</button>
     <button id="vBack" hidden>Back to job</button>
     <button id="vLayers" aria-pressed="false" title="Show or hide cabinets, materials and parts">Show / hide</button>
+    <button id="vMeasure" aria-pressed="false" title="Measure between two points (snaps to corners and edges)">Measure</button>
+    <button id="vSection" aria-pressed="false" title="Cut through the model to see inside">Section</button>
   </div>
   <div class="hint" id="hint"></div>
+  <section class="mpanel" id="mpanel" hidden aria-label="Measure">
+    <div class="mh"><b>Measure</b><button type="button" id="mDone">Done</button></div>
+    <div class="mtotal" id="mTotal" aria-live="polite">– <small>mm</small></div>
+    <div class="maxes" id="mAxes"></div>
+    <div class="msnap" id="mSnap"></div>
+    <div class="mrow"><label><input type="checkbox" id="mStraight"> Keep it straight (X / Y / Z)</label><button type="button" id="mUndo">Undo</button><button type="button" id="mClear">Clear all</button></div>
+    <ol class="mlist" id="mList" hidden></ol>
+  </section>
+  <section class="spanel" id="spanel" hidden aria-label="Section">
+    <div class="mh"><b>Section</b><span><button type="button" id="sReset">Reset</button> <button type="button" id="sDone">Done</button></span></div>
+    <div class="srow"><span>Height</span><input type="range" id="sY" min="0" max="1000" value="1000" aria-label="Cut height"><button type="button" id="sYf" aria-pressed="false" title="Keep the other side">Flip</button><output id="sYo"></output></div>
+    <div class="srow"><span>Left – right</span><input type="range" id="sX" min="0" max="1000" value="1000" aria-label="Cut left to right"><button type="button" id="sXf" aria-pressed="false" title="Keep the other side">Flip</button><output id="sXo"></output></div>
+    <div class="srow"><span>Front – back</span><input type="range" id="sZ" min="0" max="1000" value="1000" aria-label="Cut front to back"><button type="button" id="sZf" aria-pressed="false" title="Keep the other side">Flip</button><output id="sZo"></output></div>
+  </section>
   <section class="tip" id="tip" hidden aria-live="polite">
     <div class="tag">ID<span id="tid">–</span></div>
     <div class="name" id="tname"></div>
@@ -152,6 +189,12 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<!-- ambient occlusion (soft contact shading in corners and under things): desktop only, skipped if these don't load -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/Pass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/SSAOShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/math/SimplexNoise.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/SSAOPass.js"></script>
 <script>
 const Q = new URLSearchParams(location.search);
 const RAWJ = (Q.get('j') || '').trim();
@@ -296,7 +339,8 @@ const TEX_MAX = PHONE ? 1024 : 2048;
 // logarithmic depth: phones have far less depth precision than desktops, which made hidden parts
 // (hinges, back faces, edges) bleed through door faces. (It ignores polygonOffset, so the converter keeps
 // coplanar faces 2 mm apart instead.)
-const renderer = new THREE.WebGLRenderer({antialias:true, logarithmicDepthBuffer:true, precision:'highp', powerPreference:'low-power'});
+// (Desktops keep normal depth: enough precision, and the ambient occlusion pass needs it.)
+const renderer = new THREE.WebGLRenderer({antialias:true, logarithmicDepthBuffer:PHONE, precision:'highp', powerPreference: PHONE ? 'low-power' : 'high-performance'});
 renderer.setPixelRatio(Math.min(devicePixelRatio, PHONE ? 1.5 : 2));
 stage.prepend(renderer.domElement);
 const scene = new THREE.Scene();
@@ -309,13 +353,47 @@ controls.rotateSpeed = 0.55;
 controls.zoomSpeed = 0.6;
 controls.panSpeed = 0.6;
 controls.screenSpacePanning = true;
-// light mostly comes from the viewer (a lamp on the camera), so the faces you look at are the brightest and
-// thin edges / route bevels turned toward a fixed sun don't glow white
-scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8178, 0.5));
-const sun = new THREE.DirectionalLight(0xffffff, 0.15); sun.position.set(1500, 3000, 2500); scene.add(sun);
-const headlamp = new THREE.DirectionalLight(0xffffff, 0.6); headlamp.position.set(0.3, 0.5, 1);
+// Realistic look: physically based finishes lit by a soft studio "room" (image-based light, like a photo studio's
+// softboxes), filmic tone mapping, and soft shadows from an overhead light. A small lamp on the camera keeps the
+// faces you look at readable.
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95;
+renderer.physicallyCorrectLights = false;
+const hemi = new THREE.HemisphereLight(0xfffaf2, 0x8a8178, 0.18); scene.add(hemi);
+const headlamp = new THREE.DirectionalLight(0xffffff, 0.32); headlamp.position.set(0.3, 0.5, 1);
 camera.add(headlamp); headlamp.target.position.set(0, 0, -1); camera.add(headlamp.target); scene.add(camera);
+const sun = new THREE.DirectionalLight(0xfff6ea, 1.1);          // the ceiling light: casts the shadows
+scene.add(sun); scene.add(sun.target);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.shadowMap.autoUpdate = false;
+sun.castShadow = true; sun.shadow.mapSize.set(PHONE ? 1024 : 2048, PHONE ? 1024 : 2048);
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 2; sun.shadow.radius = 4;
+let shadowDirty = true;
+// the studio: a closed box with bright panels, blurred into an environment map (three.js RoomEnvironment, inlined)
+function studioEnvironment(){
+  const env = new THREE.Scene(), box = new THREE.BoxGeometry();
+  const room = new THREE.Mesh(box, new THREE.MeshStandardMaterial({side: THREE.BackSide, color: 0xbdb7ae}));
+  room.position.set(-0.757, 13.219, 0.717); room.scale.set(31.713, 28.305, 28.591); env.add(room);
+  const pl = new THREE.PointLight(0xffffff, 5, 28, 2); pl.position.set(0.418, 16.199, 0.3); env.add(pl);
+  const furniture = [[-10.906, 2.009, 1.846, -0.5, 2.425, 4.0, 2.749], [-5.607, -0.754, -0.758, 0, 2.5, 1.0, 0.5],
+    [6.167, 0.857, 7.803, 0.31, 2.3, 1.0, 1.0], [-2.85, 0.984, -3.0, 0, 1.6, 3.0, 1.0], [2.35, 0.938, -4.5, 0, 1.9, 2.4, 1.0]];
+  for (const [x, y, z, ry, sx, sy, sz] of furniture){
+    const m = new THREE.Mesh(box, new THREE.MeshStandardMaterial({color: 0x8a8580})); m.position.set(x, y, z); m.rotation.y = ry; m.scale.set(sx, sy, sz); env.add(m); }
+  const lights = [[-16.116, 14.37, 8.208, 0.1, 2.428, 2.739, 50], [-16.109, 18.021, -8.207, 0.1, 2.425, 2.751, 50],
+    [14.904, 12.198, -1.832, 0.15, 4.265, 6.331, 17], [-0.462, 8.89, 14.52, 4.38, 5.441, 0.088, 43],
+    [3.235, 11.486, -12.541, 2.5, 2.0, 0.1, 20], [0.0, 20.0, 0.0, 1.0, 0.1, 1.0, 100]];
+  for (const [x, y, z, sx, sy, sz, k] of lights){
+    const mat = new THREE.MeshBasicMaterial({color: 0xffffff}); mat.color.setScalar(k);
+    const m = new THREE.Mesh(box, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); env.add(m); }
+  const pm = new THREE.PMREMGenerator(renderer);
+  const rt = pm.fromScene(env, 0.04); pm.dispose();
+  return rt.texture;
+}
+scene.environment = studioEnvironment();
+const ENV_LEVEL = 0.4;
 
+// section cuts: three planes (height, left-right, front-back) shared by every model material; off = pushed far away
+const CLIP = [new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e7), new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e7), new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e7)];
+renderer.localClippingEnabled = true;
+const clipped = p => CLIP.some(pl => pl.distanceToPoint(p) < -0.01);
 // ---- materials (v2 files carry real CV materials + textures; v1 files get plain board colour) ----
 const loader = new THREE.TextureLoader();
 const texCache = {}, texUsers = {}, texVariants = {};
@@ -345,16 +423,37 @@ function texture(file){
         (texVariants[file] || []).forEach(v => { v.image = t.image; v.needsUpdate = true; }); texUsers[file].forEach(m => { m.needsUpdate = true; }); },
       undefined,
       () => texUsers[file].forEach(m => { m.map = null; m.color.copy(m.userData.fallback); m.userData.base.copy(m.userData.fallback); m.needsUpdate = true; }));
-    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = Math.min(PHONE ? 4 : 8, renderer.capabilities.getMaxAnisotropy());
     if ('encoding' in t) t.encoding = THREE.sRGBEncoding;
     texCache[file] = t;
   }
   return texCache[file];
 }
 const MATS = (JOB.materials || []).map(m => ({c: new THREE.Color(m.c[0], m.c[1], m.c[2]), t: m.t, s: m.s}));
-function realMaterial(mi){
-  const d = MATS[mi];
-  const mat = new THREE.MeshLambertMaterial({side:THREE.DoubleSide, transparent:true, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1});
+// how shiny / metallic a finish is: CV only exports colour and picture, so it's read from the finish name
+// (stone and gloss reflect, timber and matt boards don't, handles and steel are metal)
+const METAL = /steel|stainless|alumin|silver|chrome|nickel|brass|bronze|copper|gunmetal|galvan|metal|zinc|titanium/i;
+const STONE = /stone|quartz|marble|calacatta|carrara|caesar|dekton|granite|porcelain|neolith|laminam|essa|silestone|terrazzo|onyx|travertine/i;
+const GLOSS = /gloss|lacquer|2.?pac|glass|mirror|acrylic|polyurethane|sheen|tile/i;
+const MATT = /matt|paint|dulux|lexicon|ultra.?matt|velvet|plaster|render|concrete/i;
+function finishOf(mi, kind){
+  const d = (JOB.materials || [])[mi] || {}, n = (d.name || '') + ' ' + (d.t || ''), c = d.c || [.8, .8, .8];
+  const grey = Math.abs(c[0] - c[1]) < .06 && Math.abs(c[1] - c[2]) < .1;
+  if (METAL.test(n)) return {r: /brush|matt|satin/i.test(n) ? .42 : .28, m: .9};
+  if (STONE.test(n)) return {r: .22, m: 0};
+  if (/glass|mirror/i.test(n)) return {r: .05, m: .1};
+  if (/gloss|lacquer|2.?pac|acrylic/i.test(n)) return {r: .12, m: 0};
+  if (kind === 'hw' && !d.t && grey && c[0] > .55) return {r: .3, m: .85};    // CV's plain steel-grey hardware
+  if (kind === 'hw' && !d.t && grey && c[0] < .2) return {r: .3, m: .1};      // black appliance fronts, cooktops
+  if (/tile/i.test(n)) return {r: .3, m: 0};
+  if (MATT.test(n)) return {r: .85, m: 0};
+  if (kind === 'wall' || kind === 'room') return {r: .9, m: 0};
+  return {r: .62, m: 0};                                                       // melamine, laminate, timber veneer
+}
+function realMaterial(mi, kind){
+  const d = MATS[mi], f = finishOf(mi, kind);
+  const mat = new THREE.MeshStandardMaterial({side:THREE.DoubleSide, transparent:true, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1,
+    roughness: f.r, metalness: f.m, envMapIntensity: ENV_LEVEL * (f.m > .5 ? 1.8 : f.r < .3 ? 1.4 : 1), clippingPlanes: CLIP, clipShadows: true});
   if (d && d.t){
     // v2 UVs are already in real-size repeats; v1 needs the material's tile size
     const t = JOB.v >= 2 ? textureAt(d.t, 1, 1) : textureAt(d.t, 1 / (d.s[0] || 24), 1 / (d.s[1] || 24));
@@ -371,7 +470,9 @@ renderer.outputEncoding = THREE.sRGBEncoding;
 
 function geo(sub){
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(sub.p, 3));
+  const P = new Float32Array(sub.p), q = JOB.pq || 1;          // pq: positions in 1/pq mm steps (0.01 mm for measuring)
+  if (q !== 1) for (let k = 0; k < P.length; k++) P[k] /= q;
+  g.setAttribute('position', new THREE.BufferAttribute(P, 3));
   if (sub.u && sub.u.length) g.setAttribute('uv', new THREE.Float32BufferAttribute(sub.u, 2));
   g.setIndex(sub.i); g.computeVertexNormals(); g.computeBoundingBox();
   return g;
@@ -406,7 +507,8 @@ function makeObject(rec, isPart){
   const meshes = [], edges = [], box = new THREE.Box3();
   for (const s of subs){
     const g = geo(s);
-    const mesh = new THREE.Mesh(g, realMaterial(s.m));
+    const mesh = new THREE.Mesh(g, realMaterial(s.m, isPart ? 'part' : rec.k));
+    mesh.castShadow = rec.k !== 'wall' && rec.k !== 'room'; mesh.receiveShadow = true;
     mesh.userData.mi = s.m;
     if (isPart) mesh.userData.part = rec;
     scene.add(mesh); meshes.push(mesh); box.union(g.boundingBox);
@@ -414,11 +516,13 @@ function makeObject(rec, isPart){
       let eg;
       if (s.e && s.e.length){ eg = new THREE.BufferGeometry(); eg.setAttribute('position', g.attributes.position); eg.setIndex(s.e); }
       else eg = outline(g);
-      const e = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({transparent:true}));
+      const e = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({transparent:true, clippingPlanes: CLIP}));
       e.userData.mi = s.m;
       scene.add(e); edges.push(e); }
   }
   // the job file's number lists are now on the graphics chip: drop them so the phone isn't holding two copies
+  // small hardware (hinges, runners, cams) sits in the doors' faces and speckles the ambient occlusion: left out of it
+  if (rec.k === 'hw'){ const z = box.getSize(new THREE.Vector3()); if (Math.max(z.x, z.y, z.z) < 160) meshes.forEach(m => m.userData.noAO = true); }
   if (rec.subs) for (const s of rec.subs){ s.p = s.u = s.i = s.e = null; }
   if (rec.mesh) rec.mesh = null;
   return {p: rec, meshes, edges, box};
@@ -429,6 +533,13 @@ const hardware = JOB.context.map(c => makeObject(c, false));
 const jobCentre = new THREE.Box3(); parts.forEach(x => jobCentre.union(x.box));
 const JC = jobCentre.getCenter(new THREE.Vector3());
 const walls = hardware.filter(h => h.p.k === 'wall');
+{ // the overhead light covers the whole room: shadows under overheads and benchtops, and on the floor
+  const all = jobCentre.clone(); hardware.forEach(h => all.union(h.box));
+  const size = all.getSize(new THREE.Vector3()), r = Math.max(size.x, size.z) * 0.62 + 300;
+  sun.target.position.copy(all.getCenter(new THREE.Vector3())).setY(all.min.y);
+  sun.position.copy(sun.target.position).add(new THREE.Vector3(0.22, 1, 0.3).normalize().multiplyScalar(size.y + r * 2));
+  const sc = sun.shadow.camera; sc.left = sc.bottom = -r; sc.right = sc.top = r; sc.near = 10; sc.far = size.y + r * 4; sc.updateProjectionMatrix();
+}
 for (const w of walls){
   for (const m of w.meshes){ m.material.map = null; m.material.color.set(0xe4e1db); m.material.userData.base = m.material.color.clone(); m.material.needsUpdate = true; }
   const s = w.box.getSize(new THREE.Vector3()), c = w.box.getCenter(new THREE.Vector3());
@@ -591,6 +702,7 @@ function setLook(x, opacity, edgeColor, edgeOpacity, tint){
   for (const e of x.edges){ e.material.color.copy(edgeColor); e.material.opacity = edgeOpacity; e.material.visible = edgeOpacity > 0; }
 }
 function paint(){
+  shadowDirty = true;
   const c = n => new THREE.Color(css(n));
   scene.background = c('--stage');
   const hi = c('--hi'), edge = c('--edge'), ghost = c('--ghost');
@@ -1032,6 +1144,7 @@ function singleTap(x){
 renderer.domElement.addEventListener('pointerdown', e => down = [e.clientX, e.clientY]);
 renderer.domElement.addEventListener('pointerup', e => {
   if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) return;
+  if (measuring){ measureTap(e); return; }
   const now = performance.now(), x = pick(e);
   if (lastTap && now - lastTap.t < 330 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30){
     clearTimeout(tapTimer); lastTap = null;
@@ -1184,10 +1297,264 @@ new ResizeObserver(() => { resize(); }).observe(stage);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', paint);
 new MutationObserver(paint).observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
 
+const floorY = (() => {
+  const floors = hardware.filter(h => h.p.k === 'room').map(h => h.box).filter(b => b.max.y - b.min.y < 120 && (b.max.x - b.min.x) * (b.max.z - b.min.z) > 1e6);
+  if (floors.length) return floors.map(b => b.max.y).sort((a, b) => a - b)[Math.floor(floors.length / 2)];
+  return jobCentre.min.y;
+})();
+let commenting = false; const setCommenting = () => {};   // (Part Finder has no comments)
+// ---- section: cut the model with a level plane (height) and two upright planes (left-right, front-back).
+// A cut part is gone everywhere: drawn, shadows, taps, measuring and walking all go through the cut.
+const secBox = new THREE.Box3(); parts.forEach(x => secBox.union(x.box)); hardware.filter(h => h.p.k !== 'room').forEach(h => secBox.union(h.box));
+const SEC = {Y: {i: 0, ax: 'y', n: [0, -1, 0]}, X: {i: 1, ax: 'x', n: [-1, 0, 0]}, Z: {i: 2, ax: 'z', n: [0, 0, -1]}};
+let sectionOn = false;
+{ // raycasts skip what a section has cut away
+  const io = THREE.Raycaster.prototype.intersectObjects, i1 = THREE.Raycaster.prototype.intersectObject;
+  const keep = h => !(sectionOn && h.object.material && h.object.material.clippingPlanes === CLIP && clipped(h.point));
+  THREE.Raycaster.prototype.intersectObjects = function(o, r, out){ return io.call(this, o, r, out).filter(keep); };
+  THREE.Raycaster.prototype.intersectObject = function(o, r, out){ return i1.call(this, o, r, out).filter(keep); };
+}
+const secLines = new THREE.Group(); scene.add(secLines);
+function applySection(){
+  sectionOn = false;
+  for (const k of Object.keys(SEC)){
+    const d = SEC[k], el = $('s' + k), flip = $('s' + k + 'f').getAttribute('aria-pressed') === 'true';
+    const lo = secBox.min[d.ax], hi = secBox.max[d.ax], t = +el.value / 1000, at = lo + (hi - lo) * t;
+    const pl = CLIP[d.i], off = flip ? t <= 0 : t >= 1;
+    pl.normal.fromArray(d.n); if (flip) pl.normal.negate();
+    pl.constant = off ? 1e7 : (flip ? -at : at);
+    if (!off) sectionOn = true;
+    $('s' + k + 'o').textContent = off ? 'off' : (k === 'Y' ? Math.round(at - floorY) + ' mm above the floor' : Math.round(at - lo) + ' mm in') + (off ? '' : flip ? ' · keeping the far side' : '');
+  }
+  // the cut outline: where each plane crosses the model's box
+  for (const c of [...secLines.children]){ secLines.remove(c); c.geometry.dispose(); }
+  const b = secBox, pts = [];
+  const add = q => { for (let k = 0; k < 4; k++) pts.push(q[k], q[(k + 1) % 4]); };
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+  if (CLIP[0].constant < 1e6){ const y = CLIP[0].normal.y < 0 ? CLIP[0].constant : -CLIP[0].constant; add([V(b.min.x, y, b.min.z), V(b.max.x, y, b.min.z), V(b.max.x, y, b.max.z), V(b.min.x, y, b.max.z)]); }
+  if (CLIP[1].constant < 1e6){ const x = CLIP[1].normal.x < 0 ? CLIP[1].constant : -CLIP[1].constant; add([V(x, b.min.y, b.min.z), V(x, b.max.y, b.min.z), V(x, b.max.y, b.max.z), V(x, b.min.y, b.max.z)]); }
+  if (CLIP[2].constant < 1e6){ const z = CLIP[2].normal.z < 0 ? CLIP[2].constant : -CLIP[2].constant; add([V(b.min.x, b.min.y, z), V(b.max.x, b.min.y, z), V(b.max.x, b.max.y, z), V(b.min.x, b.max.y, z)]); }
+  if (pts.length){
+    const l = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color: new THREE.Color(css('--hi')), transparent: true, opacity: .7, depthTest: false}));
+    l.renderOrder = 20; secLines.add(l);
+  }
+  $('vSection').textContent = sectionOn ? 'Section (on)' : 'Section';
+  shadowDirty = true;
+}
+function openSection(open){
+  $('spanel').hidden = !open; $('vSection').setAttribute('aria-pressed', open);
+  secLines.visible = open;
+  if (open){ openSheet(false); if (measuring) setMeasuring(false); if (commenting) setCommenting(false); $('card').hidden = true; $('hint').hidden = true; }
+  else { $('hint').hidden = false; updateCard(); }
+}
+for (const k of Object.keys(SEC)){
+  $('s' + k).addEventListener('input', applySection);
+  $('s' + k + 'f').onclick = () => { const b = $('s' + k + 'f'), on = b.getAttribute('aria-pressed') !== 'true'; b.setAttribute('aria-pressed', on);
+    const el = $('s' + k); if (+el.value >= 1000 && on) el.value = 0; else if (+el.value <= 0 && !on) el.value = 1000; applySection(); };
+}
+$('vSection').onclick = () => openSection($('spanel').hidden);
+$('sDone').onclick = () => openSection(false);
+$('sReset').onclick = () => { for (const k of Object.keys(SEC)){ $('s' + k).value = 1000; $('s' + k + 'f').setAttribute('aria-pressed', 'false'); } applySection(); };
+applySection(); secLines.visible = false;
+
+// ---- measure: two taps, snapped to the nearest corner, edge middle or edge (else the surface), in mm to 2 places ----
+let measuring = false, mFirst = null, mHover = null;
+const measures = [], mGroup = new THREE.Group(); mGroup.renderOrder = 25; scene.add(mGroup);
+const TOUCH = matchMedia('(pointer: coarse)').matches;
+const SNAP_PX = TOUCH ? {v: 26, mid: 20, edge: 18} : {v: 14, mid: 11, edge: 9};
+const SNAP_NAMES = {v: 'Corner', mid: 'Middle of edge', edge: 'Edge', face: 'Surface'};
+const mm = v => (Math.round(v * 100) / 100).toFixed(2);
+function markerSprite(kind, strong){
+  const c = document.createElement('canvas'); c.width = c.height = 48; const g = c.getContext('2d');
+  g.lineWidth = 5; g.strokeStyle = '#ffffff'; g.fillStyle = strong ? css('--hi') : css('--fg');
+  g.beginPath();
+  if (kind === 'v') g.rect(10, 10, 28, 28);
+  else if (kind === 'mid'){ g.moveTo(24, 8); g.lineTo(41, 38); g.lineTo(7, 38); g.closePath(); }
+  else if (kind === 'edge'){ g.moveTo(24, 6); g.lineTo(42, 24); g.lineTo(24, 42); g.lineTo(6, 24); g.closePath(); }
+  else g.arc(24, 24, 12, 0, Math.PI * 2);
+  g.stroke(); g.fill();
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({map: new THREE.CanvasTexture(c), depthTest: false, depthWrite: false, sizeAttenuation: false, transparent: true}));
+  sp.scale.set(0.026, 0.026, 1); sp.renderOrder = 26; return sp;
+}
+const hoverMark = {}; for (const k of ['v', 'mid', 'edge', 'face']){ hoverMark[k] = markerSprite(k, true); hoverMark[k].visible = false; scene.add(hoverMark[k]); }
+const rubber = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+  new THREE.LineDashedMaterial({color: new THREE.Color(css('--hi')), dashSize: 30, gapSize: 20, depthTest: false, transparent: true}));
+rubber.renderOrder = 25; rubber.visible = false; scene.add(rubber);
+const sv = new THREE.Vector3();
+function toScreen(p){ sv.copy(p).project(camera); const r = renderer.domElement.getBoundingClientRect(); return [(sv.x + 1) / 2 * r.width, (1 - sv.y) / 2 * r.height, sv.z]; }
+// can the camera see this point? (nothing solid in front of it)
+const seeRay = new THREE.Raycaster();
+function canSee(p, meshes){
+  const d = p.distanceTo(camera.position); seeRay.set(camera.position, p.clone().sub(camera.position).normalize()); seeRay.far = d - 0.5;
+  return !seeRay.intersectObjects(meshes).some(h => h.distance < d - Math.max(1, d * 0.0015));
+}
+function snapAt(cx, cy){
+  const r = renderer.domElement.getBoundingClientRect(), px = cx - r.left, py = cy - r.top;
+  ray.setFromCamera({x: px / r.width * 2 - 1, y: -py / r.height * 2 + 1}, camera);
+  const objs = parts.concat(hardware).filter(o => o.meshes.some(m => m.visible));
+  const meshes = objs.flatMap(o => o.meshes.filter(m => m.visible && m.material.opacity > .3));
+  const hit = ray.intersectObjects(meshes)[0];
+  if (!hit) return null;
+  const owner = objs.find(o => o.meshes.includes(hit.object));
+  // candidate edges: the drawn outline of the part (real corners and edges, not the triangles' diagonals);
+  // hardware has no outline, so its triangle edges near the hit are used
+  const segs = [], A = new THREE.Vector3(), B = new THREE.Vector3();
+  const near = hit.distance * Math.tan(camera.fov * Math.PI / 360) * 2 / r.height * 60;   // ~60 px around the hit
+  const addSeg = (a, b) => { if (ray.ray.distanceSqToSegment(a, b) < near * near) segs.push([a.clone(), b.clone()]); };
+  if (owner && owner.edges.length) for (const e of owner.edges){
+    const pos = e.geometry.attributes.position, idx = e.geometry.index, m = e.matrixWorld, n = idx ? idx.count : pos.count;
+    for (let k = 0; k + 1 < n; k += 2){
+      const i = idx ? idx.getX(k) : k, j = idx ? idx.getX(k + 1) : k + 1;
+      A.fromBufferAttribute(pos, i).applyMatrix4(m); B.fromBufferAttribute(pos, j).applyMatrix4(m); addSeg(A, B);
+    }
+  } else if (hit.face){
+    const pos = hit.object.geometry.attributes.position, m = hit.object.matrixWorld, f = hit.face;
+    const P = [f.a, f.b, f.c].map(i => new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(m));
+    for (let k = 0; k < 3; k++) addSeg(P[k], P[(k + 1) % 3]);
+  }
+  const best = (list, lim) => list.map(p => { const s = toScreen(p); return {p, d: Math.hypot(s[0] - px, s[1] - py)}; })
+    .filter(c => c.d <= lim).sort((a, b) => a.d - b.d).find(c => canSee(c.p, meshes));
+  const v = best(segs.flatMap(s => s), SNAP_PX.v); if (v) return {p: v.p, kind: 'v'};
+  const md = best(segs.map(s => s[0].clone().add(s[1]).multiplyScalar(.5)), SNAP_PX.mid); if (md) return {p: md.p, kind: 'mid'};
+  const on = best(segs.map(s => { const q = new THREE.Vector3(); ray.ray.distanceSqToSegment(s[0], s[1], null, q); return q; }), SNAP_PX.edge);
+  if (on) return {p: on.p, kind: 'edge'};
+  return {p: hit.point.clone(), kind: 'face'};
+}
+function straighten(a, b){                       // keep only the biggest of the three directions
+  const d = b.clone().sub(a), ax = Math.abs(d.x) >= Math.abs(d.y) && Math.abs(d.x) >= Math.abs(d.z) ? 'x' : Math.abs(d.y) >= Math.abs(d.z) ? 'y' : 'z';
+  const out = a.clone(); out[ax] = b[ax]; return out;
+}
+function straightOn(e){ return $('mStraight').checked || (e && e.shiftKey); }
+function showReading(a, b, tail){
+  const d = b.clone().sub(a);
+  $('mTotal').innerHTML = mm(d.length()) + ' <small>mm</small>';
+  $('mAxes').innerHTML = '<span>X <b>' + mm(Math.abs(d.x)) + '</b></span><span>Y (height) <b>' + mm(Math.abs(d.y)) + '</b></span><span>Z <b>' + mm(Math.abs(d.z)) + '</b></span>';
+  if (tail !== undefined) $('mSnap').textContent = tail;
+}
+function drawMeasures(){
+  for (const c of [...mGroup.children]){ mGroup.remove(c); if (c.geometry) c.geometry.dispose(); if (c.material){ if (c.material.map) c.material.map.dispose(); c.material.dispose(); } }
+  const pts = [];
+  for (const m of measures){
+    pts.push(m.a, m.b);
+    for (const [p, k] of [[m.a, m.ka], [m.b, m.kb]]){ const s = markerSprite(k, false); s.scale.multiplyScalar(.7); s.position.copy(p); mGroup.add(s); }
+    const lab = dimLabel(mm(m.a.distanceTo(m.b))); lab.position.copy(m.a).add(m.b).multiplyScalar(.5); mGroup.add(lab);
+  }
+  if (mFirst){ const s = markerSprite(mFirst.kind, true); s.position.copy(mFirst.p); mGroup.add(s); }
+  if (pts.length){
+    const l = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color: new THREE.Color(css('--hi')), depthTest: false, transparent: true}));
+    l.renderOrder = 24; mGroup.add(l);
+  }
+  const list = $('mList'); list.hidden = measures.length < 2;
+  list.innerHTML = measures.map((m, i) => { const d = m.b.clone().sub(m.a);
+    return '<li><b>' + mm(d.length()) + '</b> mm · X ' + mm(Math.abs(d.x)) + ' · Y ' + mm(Math.abs(d.y)) + ' · Z ' + mm(Math.abs(d.z)) + '</li>'; }).join('');
+  $('mUndo').disabled = !measures.length && !mFirst; $('mClear').disabled = !measures.length && !mFirst;
+}
+function hideHover(){ for (const k in hoverMark) hoverMark[k].visible = false; rubber.visible = false; }
+function measureHover(e){
+  const s = snapAt(e.clientX, e.clientY); mHover = s; hideHover();
+  if (!s){ $('mSnap').textContent = mFirst ? 'Pick the second point on the model' : 'Point at the model'; return; }
+  const m = hoverMark[s.kind]; m.position.copy(s.p); m.visible = true;
+  if (mFirst){
+    const b = straightOn(e) ? straighten(mFirst.p, s.p) : s.p;
+    rubber.geometry.setFromPoints([mFirst.p, b]); rubber.computeLineDistances(); rubber.visible = true;
+    showReading(mFirst.p, b, SNAP_NAMES[s.kind] + (straightOn(e) ? ' · kept straight' : ''));
+  } else $('mSnap').textContent = SNAP_NAMES[s.kind];
+}
+function measureTap(e){
+  const s = snapAt(e.clientX, e.clientY);
+  if (!s){ $('mSnap').textContent = 'Tap on the model'; return; }
+  if (!mFirst){ mFirst = s; $('mTotal').innerHTML = '– <small>mm</small>'; $('mAxes').textContent = ''; $('mSnap').textContent = SNAP_NAMES[s.kind] + ' · now the second point'; }
+  else {
+    const b = straightOn(e) ? straighten(mFirst.p, s.p) : s.p;
+    measures.push({a: mFirst.p, b, ka: mFirst.kind, kb: straightOn(e) ? 'face' : s.kind}); showReading(mFirst.p, b, 'Measured · tap two more points for another');
+    mFirst = null; hideHover();
+  }
+  drawMeasures();
+}
+let hoverQueued = null;
+renderer.domElement.addEventListener('pointermove', e => {
+  if (!measuring || e.pointerType === 'touch') return;
+  if (!hoverQueued) requestAnimationFrame(() => { const ev = hoverQueued; hoverQueued = null; if (measuring) measureHover(ev); });
+  hoverQueued = e;
+});
+renderer.domElement.addEventListener('pointerleave', () => { if (measuring) hideHover(); });
+function setMeasuring(on){
+  measuring = on; $('vMeasure').setAttribute('aria-pressed', on); $('mpanel').hidden = !on;
+  if (on){ if (commenting) setCommenting(false); openSheet(false); openSection(false); if (picking) setPicking(false); $('card').hidden = true; $('tip').hidden = true;
+    $('mSnap').textContent = TOUCH ? 'Tap two points · it snaps to corners, edge middles and edges · zoom in for small parts'
+      : 'Click two points · snaps to corners, edge middles and edges · Shift keeps it straight · zoom in for small parts'; }
+  else { mFirst = null; hideHover(); hintText(); updateCard(); }
+  $('hint').hidden = on; drawMeasures();
+}
+$('vMeasure').onclick = () => setMeasuring(!measuring);
+$('mDone').onclick = () => setMeasuring(false);
+$('mUndo').onclick = () => { if (mFirst) mFirst = null; else measures.pop(); hideHover(); drawMeasures(); if (!measures.length){ $('mTotal').innerHTML = '– <small>mm</small>'; $('mAxes').textContent = ''; } };
+$('mClear').onclick = () => { measures.length = 0; mFirst = null; hideHover(); drawMeasures(); $('mTotal').innerHTML = '– <small>mm</small>'; $('mAxes').textContent = ''; };
+addEventListener('keydown', e => { if (e.key === 'Escape' && measuring){ if (mFirst){ mFirst = null; hideHover(); drawMeasures(); } else setMeasuring(false); } });
+
+// ---- ambient occlusion: the soft darkening where boards meet, under overheads and kickboards that makes it read as real.
+// Normals + depth of the solid model, SSAO at half size, blurred, then multiplied over the finished picture.
+// Desktop only; switches itself off if the computer can't keep up.
+let ao = null, aoSlow = 0;
+if (!PHONE && THREE.SSAOPass && THREE.SimplexNoise){
+  try {
+    ao = new THREE.SSAOPass(scene, camera, 2, 2);
+    ao.kernelRadius = 90; ao.normalMaterial.clippingPlanes = CLIP; ao.normalMaterial.side = THREE.DoubleSide;   // CV flips some faces
+    ao.normalRenderTarget.depthTexture.type = THREE.UnsignedIntType;     // 16-bit depth banded flat boards into stripes
+    // the surface direction comes from the depth itself, not from CV's normals (hinge bores and flipped faces speckled it)
+    const fs = ao.ssaoMaterial.fragmentShader, want = 'vec3 viewNormal = getViewNormal( vUv );';
+    if (fs.indexOf(want) < 0) throw new Error('SSAO shader changed');
+    ao.ssaoMaterial.fragmentShader = fs.replace(want, 'vec3 viewNormal = normalize( cross( dFdx( viewPosition ), dFdy( viewPosition ) ) ); if ( dot( viewNormal, viewPosition ) > 0.0 ) viewNormal = -viewNormal;');
+    // strength fades out when viewing the whole room from far away (nothing to gain there), and background stays clear
+    ao.ssaoMaterial.uniforms.aoStrength = {value: 1};
+    ao.ssaoMaterial.fragmentShader = ao.ssaoMaterial.fragmentShader
+      .replace('uniform float maxDistance;', 'uniform float maxDistance;\nuniform float aoStrength;')
+      .replace('float depth = getDepth( vUv );', 'float depth = getDepth( vUv );\n\t\t\tif ( depth >= 0.99999 ) { gl_FragColor = vec4( 1.0 ); return; }')
+      .replace('occlusion = clamp( occlusion / float( KERNEL_SIZE ), 0.0, 1.0 );', 'occlusion = clamp( occlusion / float( KERNEL_SIZE ), 0.0, 1.0 ) * aoStrength;');
+    if (!/aoStrength;/.test(ao.ssaoMaterial.fragmentShader) || !/\* aoStrength/.test(ao.ssaoMaterial.fragmentShader)) throw new Error('SSAO shader changed');
+    ao.ssaoMaterial.extensions = {derivatives: true}; ao.ssaoMaterial.needsUpdate = true;
+    ao.overrideVisibility = function(){          // only the solid model: no lines, labels, pins or faded walls
+      const cache = this._visibilityCache;
+      this.scene.traverse(o => { cache.set(o, o.visible);
+        if (o.isPoints || o.isLine || o.isSprite || (o.isMesh && (o.userData.noAO || (o.material && (o.material.opacity < .9 || o.material.depthTest === false))))) o.visible = false; });
+    };
+    ao.copyMaterial.blendSrc = THREE.DstColorFactor; ao.copyMaterial.blendDst = THREE.ZeroFactor;   // multiply over the screen
+  } catch (e){ ao = null; }
+}
+function aoSize(){ if (ao){ const w = renderer.domElement.width, h = renderer.domElement.height; const k = renderer.getPixelRatio() >= 1.5 ? 2 : 1; ao.setSize(Math.max(2, Math.round(w / k)), Math.max(2, Math.round(h / k))); } }
+function drawAO(){
+  const u = ao.ssaoMaterial.uniforms, far = camera.position.distanceTo(controls.target);
+  u.aoStrength.value = THREE.MathUtils.clamp((9000 - far) / 5000, 0, 1);
+  if (u.aoStrength.value < 0.05) return false;
+  u.cameraNear.value = camera.near; u.cameraFar.value = camera.far;
+  u.cameraProjectionMatrix.value.copy(camera.projectionMatrix); u.cameraInverseProjectionMatrix.value.copy(camera.projectionMatrixInverse);
+  ao.blurMaterial.uniforms.resolution.value.set(ao.width, ao.height);
+  const span = camera.far - camera.near;
+  ao.overrideVisibility(); ao.renderOverride(renderer, ao.normalMaterial, ao.normalRenderTarget, 0x7777ff, 1.0); ao.restoreVisibility();
+  u.kernelRadius.value = ao.kernelRadius; u.minDistance.value = 22 / span; u.maxDistance.value = 250 / span;
+  ao.renderPass(renderer, ao.ssaoMaterial, ao.ssaoRenderTarget);
+  ao.renderPass(renderer, ao.blurMaterial, ao.blurRenderTarget);
+  ao.copyMaterial.uniforms.tDiffuse.value = ao.blurRenderTarget.texture; ao.copyMaterial.blending = THREE.CustomBlending;
+  ao.renderPass(renderer, ao.copyMaterial, null);
+  return true;
+}
+let lastFrame = 0;
+function render(t){
+  renderer.render(scene, camera);
+  if (!ao) return;
+  if (!drawAO()){ lastFrame = 0; return; }
+  // too slow (well under 25 frames a second for 2 s): drop the occlusion
+  if (lastFrame){ aoSlow = t - lastFrame > 45 ? aoSlow + 1 : Math.max(0, aoSlow - 2); if (aoSlow > 50){ ao = null; console.log('ambient occlusion off: too slow here'); } }
+  lastFrame = t;
+}
+new ResizeObserver(aoSize).observe(stage); aoSize();
+
 resize(); hintText(); fromHash();
 (function loop(t){
   if (sel) for (const m of sel.meshes) m.material.emissiveIntensity = still ? .35 : .2 + .25 * (1 + Math.sin((t || 0) / 300)) / 2;
-  moveStep(); controls.update(); wallStep(); renderer.render(scene, camera); requestAnimationFrame(loop);
+  moveStep(); controls.update(); wallStep();
+  if (shadowDirty || ex !== exTarget || movers.some(m => m.moved)){ renderer.shadowMap.needsUpdate = true; shadowDirty = false; }
+  render(t || 0); requestAnimationFrame(loop);
 })();
 }
 </script>
