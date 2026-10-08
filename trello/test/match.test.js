@@ -56,6 +56,27 @@ var factory = {
 Object.keys(factory).forEach(function (n) { eq("factory: " + n.slice(0, 58), key(n), factory[n]); });
 eq("other-room job is not even offered as likely", M.match("J1081 - 61 Howitt Rd - Silcon - Powder", jobs).candidates.length, 0);
 
+// New J1093 room models, 8 Oct 2026: one card can cover two of them.
+var j1093 = jobs.concat([
+  { key: "hl", name: "J1093 - 62 Florizel Street - Hallway Laundry-Linen - Hallway Laundry & Linen", number: "J1093", room: "Hallway Laundry & Linen" },
+  { key: "bv", name: "J1093 - 62 Florizel Street - Hallway Laundry-Linen - Bathroom Vanity", number: "J1093", room: "Bathroom Vanity" },
+  { key: "b1", name: "J1093 - 62 Florizel Street - Hallway Laundry-Linen - Bed 1 Robe", number: "J1093", room: "Bed 1 Robe" },
+  { key: "b4", name: "J1093 - 62 Florizel Street - Hallway Laundry-Linen - Bed 4 Robe", number: "J1093", room: "Bed 4 Robe" },
+  { key: "mv", name: "J1093 - 62 Florizel Street - Hallway Laundry-Linen - Master Vanity", number: "J1093", room: "Master Vanity" },
+]);
+function keys(card) { return M.resolve(card, j1093, "").jobs.map(function (j) { return j.key; }).sort().join(","); }
+var P = "J1093 - Veronica Podhorodecki 62 Florizel Street, Glen Iris - ";
+eq("robes card covers Bed 1 + Bed 4", keys(P + "Bed 1+4 Robes"), "b1,b4");
+eq("vanity card covers both vanities", keys(P + "Vanity's"), "bv,mv");
+eq("hallway card gets the hallway model only", keys(P + "Hallway/Linen"), "hl");
+eq("kitchen card still the kitchen model only", keys(P + "Kitchen - Laundry/Pantry"), "j1093-62-florizel-street-kitchen-pantry");
+eq("J1081 Powder still nothing", keys("J1081 - 61 Howitt Rd - Silcon - Powder"), "");
+eq("pinned job still wins, alone", M.resolve(P + "Vanity's", j1093, "bv").jobs.length, 1);
+var two = M.withLinks("Notes", [j1093[6], j1093[7]], "https://masonn96-wq.github.io/part-finder/");
+eq("two links, one per line, on top", two.split("\n").length, 4);
+eq("re-writing the same two links changes nothing", M.withLinks(two, [j1093[6], j1093[7]], "https://masonn96-wq.github.io/part-finder/"), two);
+eq("going from two links to one leaves one", (M.withLink(two, j1093[6], "https://masonn96-wq.github.io/part-finder/").match(/\?j=/g) || []).length, 1);
+
 var V = "https://masonn96-wq.github.io/part-finder/";
 var bain = jobs[1], andy = jobs[3];
 var live = "**[3D View: J974 - Cathy & John Bain (Kitchen)](https://masonn96-wq.github.io/part-finder/?j=j974-cathy-john-bain)**";
