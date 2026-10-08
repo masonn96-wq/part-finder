@@ -93,6 +93,26 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
 .scan p{position:absolute;left:16px;right:16px;bottom:calc(84px + env(safe-area-inset-bottom,0px));margin:0;text-align:center;color:#fff;font:600 17px var(--display);text-shadow:0 1px 3px #000}
 .scan button{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(24px + env(safe-area-inset-bottom,0px));font:600 16px var(--display);padding:12px 28px;border-radius:8px;border:0;background:#fff;color:#111;cursor:pointer}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
+/* measure magnifier: a zoomed look at the point being picked */
+.loupe{position:absolute;left:0;top:0;width:150px;height:150px;border:3px solid var(--hi);border-radius:10px;pointer-events:none;z-index:4;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.loupe::before,.loupe::after{content:"";position:absolute;background:var(--hi);opacity:.85}
+.loupe::before{left:50%;top:30%;bottom:30%;width:1px}
+.loupe::after{top:50%;left:30%;right:30%;height:1px}
+/* a tapped cabinet / part: hide it, or try another finish on it */
+.acts{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.acts button,.finpanel button{font:500 13px var(--display);padding:7px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer;min-height:36px}
+.acts button.go{background:var(--hi);border-color:var(--hi);color:var(--hi-ink)}
+.finpanel{position:absolute;left:12px;right:12px;bottom:12px;max-width:480px;margin-left:auto;max-height:70%;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px 14px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:3}
+.finpanel .mh{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:16px}
+.fpscope{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.fpscope button[aria-checked="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.fpgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
+.fpgrid button{display:grid;gap:4px;padding:4px;min-height:0;text-align:left;font-size:11px;line-height:1.2}
+.fpgrid button[aria-pressed="true"]{outline:2px solid var(--hi);outline-offset:1px}
+.fpgrid i{display:block;height:54px;border-radius:4px;background-size:cover;background-position:center;border:1px solid var(--line)}
+.fpgrid h4{grid-column:1/-1;margin:6px 0 0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.fprow{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--muted)}
+.fprow input{width:34px;height:28px;padding:0;border:1px solid var(--line);border-radius:6px;vertical-align:middle;margin-left:6px}
 /* measure + section */
 .views button#vMeasure[aria-pressed="true"],.views button#vSection[aria-pressed="true"]{background:var(--hi);border-color:var(--hi);color:var(--hi-ink)}
 .mpanel,.spanel{position:absolute;left:12px;bottom:12px;width:min(360px,calc(100% - 24px));background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:2;font-size:14px}
@@ -145,6 +165,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
     <button id="vSection" aria-pressed="false" title="Cut through the model to see inside">Section</button>
   </div>
   <div class="hint" id="hint"></div>
+  <div class="loupe" id="loupe" hidden aria-hidden="true"></div>
   <section class="mpanel" id="mpanel" hidden aria-label="Measure">
     <div class="mh"><b>Measure</b><button type="button" id="mDone">Done</button></div>
     <div class="mtotal" id="mTotal" aria-live="polite">– <small>mm</small></div>
@@ -603,7 +624,7 @@ function moveStep(){
     if (!moving && !exDirty) continue;
     // pocket doors (m.slide): first half of the move turns the door, second half slides it back into the pocket
     const turn = mv.m.slide != null ? ease(Math.min(1, mv.k * 2)) : mv.k;
-    if (mv.m.t === 'door') mv.pivot.quaternion.setFromAxisAngle(mv.axis, turn * (mv.m.a != null ? mv.m.a : 110) * Math.PI / 180);
+    if (mv.m.t === 'door') mv.pivot.quaternion.setFromAxisAngle(mv.axis, turn * doorAngle(mv) * Math.PI / 180);
     const off = mv.parentMv ? ZERO : (mv.front && mv.front.off) || ZERO;
     mv.pivot.position.copy(mv.P).addScaledVector(off, ex);
     if (mv.m.t === 'drawer') mv.pivot.position.addScaledVector(mv.n, mv.k * mv.travel);
@@ -665,6 +686,12 @@ for (const mv of movers){
   mv.travel = outer.length ? Math.min(mv.m.dist, Math.min(...outer) - 20) : mv.m.dist;
 }
 // tap a door/drawer: roll-outs behind closed doors open the doors first; closing a door closes what is behind it
+// doors open to 90 degrees at most, so they never swing into the next door or a panel; bifolds (a door with a
+// door hung off it, or hung off another) and pocket doors keep the angle CV gave them
+function doorAngle(mv){
+  const a = mv.m.a != null ? mv.m.a : 110;
+  return mv.parentMv || (mv.kids && mv.kids.length) || mv.m.slide != null ? a : Math.min(a, 90);
+}
 function toggleMover(mv){
   if (mv.m.fixed) return;                    // fixed blind panel: never opens
   if (mv.parentMv) return toggleMover(mv.parentMv);
@@ -1148,7 +1175,7 @@ function singleTap(x){
 renderer.domElement.addEventListener('pointerdown', e => down = [e.clientX, e.clientY]);
 renderer.domElement.addEventListener('pointerup', e => {
   if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) return;
-  if (measuring){ measureTap(e); return; }
+  if (measuring){ if (e.pointerType !== 'touch') measureTap(e); return; }   // (touch: placed by the drag-and-lift below)
   const now = performance.now(), x = pick(e);
   if (lastTap && now - lastTap.t < 330 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30){
     clearTimeout(tapTimer); lastTap = null;
@@ -1319,6 +1346,43 @@ let sectionOn = false;
   THREE.Raycaster.prototype.intersectObject = function(o, r, out){ return i1.call(this, o, r, out).filter(keep); };
 }
 const secLines = new THREE.Group(); scene.add(secLines);
+// solid cut faces: where a cut goes through a board, fill it in (stencil caps) instead of showing a hollow shell.
+// For each active plane: every face of the boards beyond the cut flips one stencil bit; along a line of sight that
+// starts inside a board the count is odd. Then the plane is drawn only there. (Counting faces, not front minus back:
+// CV turns some faces inside out.) Boards and walls only (hardware isn't always closed).
+const capObjs = parts.concat(walls).flatMap(x => x.meshes);
+capObjs.forEach(m => m.layers.enable(1));
+const capColor = new THREE.Color(0xb9ad9c);            // cut face: flat warm grey, like a drawing's section fill
+const caps = CLIP.map((pl, i) => {
+  const flip = new THREE.MeshBasicMaterial({side: THREE.DoubleSide, colorWrite: false, depthWrite: false, depthTest: false, clippingPlanes: [pl],
+    stencilWrite: true, stencilWriteMask: 1, stencilFunc: THREE.AlwaysStencilFunc,
+    stencilFail: THREE.InvertStencilOp, stencilZFail: THREE.InvertStencilOp, stencilZPass: THREE.InvertStencilOp});
+  const capMat = new THREE.MeshBasicMaterial({color: capColor, side: THREE.DoubleSide, toneMapped: false,
+    clippingPlanes: CLIP.filter((_, k) => k !== i), stencilWrite: true, stencilRef: 0, stencilFuncMask: 1, stencilFunc: THREE.NotEqualStencilFunc,
+    stencilFail: THREE.ReplaceStencilOp, stencilZFail: THREE.ReplaceStencilOp, stencilZPass: THREE.ReplaceStencilOp,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1});
+  const size = secBox.getSize(new THREE.Vector3()).length() * 2 + 2000;
+  const cap = new THREE.Mesh(new THREE.PlaneGeometry(size, size), capMat);
+  const capScene = new THREE.Scene(); capScene.add(cap);
+  return {flip, cap, capScene, pl};
+});
+function drawCaps(){
+  if (!sectionOn) return;
+  const ac = renderer.autoClear, mask = camera.layers.mask, ctr = secBox.getCenter(new THREE.Vector3());
+  renderer.autoClear = false;
+  for (const c of caps){
+    if (c.pl.constant > 1e6) continue;
+    c.cap.position.copy(ctr).addScaledVector(c.pl.normal, -c.pl.distanceToPoint(ctr));   // the plane, centred on the job
+    c.cap.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), c.pl.normal);
+    renderer.clearStencil();
+    camera.layers.set(1);
+    const bg = scene.background; scene.background = null;     // (a colour background would clear the picture)
+    scene.overrideMaterial = c.flip; renderer.render(scene, camera);
+    scene.overrideMaterial = null; camera.layers.mask = mask; scene.background = bg;
+    renderer.render(c.capScene, camera);
+  }
+  renderer.autoClear = ac;
+}
 function applySection(){
   sectionOn = false;
   for (const k of Object.keys(SEC)){
@@ -1454,9 +1518,34 @@ function drawMeasures(){
   $('mUndo').disabled = !measures.length && !mFirst; $('mClear').disabled = !measures.length && !mFirst;
 }
 function hideHover(){ for (const k in hoverMark) hoverMark[k].visible = false; rubber.visible = false; }
+const LOUPE = 150, LOUPE_ZOOM = 4;
+const loupe = {on: false, x: 0, y: 0, fx: 0, fy: 0};
+function setLoupe(e, s){
+  const r = renderer.domElement.getBoundingClientRect();
+  loupe.fx = e.clientX - r.left; loupe.fy = e.clientY - r.top;           // finger / pointer
+  if (s){ const q = toScreen(s.p); loupe.x = q[0]; loupe.y = q[1]; } else { loupe.x = loupe.fx; loupe.y = loupe.fy; }
+  loupe.on = true; $('loupe').hidden = false; markDirty();
+}
+function hideLoupe(){ if (loupe.on){ loupe.on = false; $('loupe').hidden = true; markDirty(); } }
+// drawn into a corner of the same canvas: the region round the point, LOUPE_ZOOM times bigger
+function drawLoupe(){
+  if (!loupe.on) return;
+  const W = renderer.domElement.clientWidth, H = renderer.domElement.clientHeight, S = LOUPE;
+  let lx = TOUCH ? loupe.fx - S / 2 : loupe.fx + 28, ly = TOUCH ? loupe.fy - S - 80 : loupe.fy - S - 28;
+  if (ly < 4) ly = TOUCH ? Math.min(H - S - 4, loupe.fy + 80) : loupe.fy + 28;
+  lx = Math.min(Math.max(4, lx), W - S - 4); ly = Math.min(Math.max(4, ly), H - S - 4);
+  const el = $('loupe'); el.style.transform = 'translate(' + (lx - 3) + 'px,' + (ly - 3) + 'px)';
+  const v = S / LOUPE_ZOOM;
+  camera.setViewOffset(W, H, loupe.x - v / 2, loupe.y - v / 2, v, v);
+  renderer.setScissorTest(true); renderer.setScissor(lx, H - ly - S, S, S); renderer.setViewport(lx, H - ly - S, S, S);
+  const spr = []; scene.traverse(o => { if (o.isSprite && o.visible){ spr.push(o); o.scale.multiplyScalar(1 / LOUPE_ZOOM); } });   // markers keep their size
+  renderer.render(scene, camera); drawCaps();
+  spr.forEach(o => o.scale.multiplyScalar(LOUPE_ZOOM));
+  camera.clearViewOffset(); renderer.setScissorTest(false); renderer.setViewport(0, 0, W, H);
+}
 function measureHover(e){
   markDirty();
-  const s = snapAt(e.clientX, e.clientY); mHover = s; hideHover();
+  const s = snapAt(e.clientX, e.clientY); mHover = s; hideHover(); setLoupe(e, s);
   if (!s){ $('mSnap').textContent = mFirst ? 'Pick the second point on the model' : 'Point at the model'; return; }
   const m = hoverMark[s.kind]; m.position.copy(s.p); m.visible = true;
   if (mFirst){
@@ -1482,13 +1571,35 @@ renderer.domElement.addEventListener('pointermove', e => {
   if (!hoverQueued) requestAnimationFrame(() => { const ev = hoverQueued; hoverQueued = null; if (measuring) measureHover(ev); });
   hoverQueued = e;
 });
-renderer.domElement.addEventListener('pointerleave', () => { if (measuring) hideHover(); });
+renderer.domElement.addEventListener('pointerleave', () => { if (measuring){ hideHover(); hideLoupe(); } });
+// touch: drag a finger to the point (the magnifier shows above it), lift to place it; two fingers still pan and zoom
+const touches = new Set(); let touchMulti = false, touchLast = null;
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (e.pointerType !== 'touch') return;
+  touches.add(e.pointerId); if (touches.size > 1){ touchMulti = true; hideLoupe(); hideHover(); }
+  if (measuring && touches.size === 1){ touchMulti = false; touchLast = e; measureHover(e); }
+});
+renderer.domElement.addEventListener('pointermove', e => {
+  if (e.pointerType !== 'touch' || !measuring || touchMulti || !touches.has(e.pointerId)) return;
+  touchLast = e;
+  if (!hoverQueued) requestAnimationFrame(() => { const ev = hoverQueued; hoverQueued = null; if (measuring && !touchMulti) measureHover(ev); });
+  hoverQueued = e;
+});
+const touchEnd = e => {
+  if (e.pointerType !== 'touch') return;
+  const was = touches.has(e.pointerId); touches.delete(e.pointerId);
+  if (was && measuring && !touchMulti && touches.size === 0 && e.type === 'pointerup') measureTap(touchLast || e);
+  if (!touches.size){ touchMulti = false; hideLoupe(); }
+};
+renderer.domElement.addEventListener('pointerup', touchEnd);
+renderer.domElement.addEventListener('pointercancel', touchEnd);
 function setMeasuring(on){
   measuring = on; $('vMeasure').setAttribute('aria-pressed', on); $('mpanel').hidden = !on;
   if (on){ if (commenting) setCommenting(false); openSheet(false); openSection(false); if (picking) setPicking(false); $('card').hidden = true; $('tip').hidden = true;
-    $('mSnap').textContent = TOUCH ? 'Tap two points · it snaps to corners, edge middles and edges · zoom in for small parts'
+    $('mSnap').textContent = TOUCH ? 'Drag a finger to a point and lift to place it (two fingers move the view) · snaps to corners and edges'
       : 'Click two points · snaps to corners, edge middles and edges · Shift for a free (angled) line · zoom in for small parts'; }
-  else { mFirst = null; hideHover(); hintText(); updateCard(); }
+  else { mFirst = null; hideHover(); hideLoupe(); hintText(); updateCard(); }
+  if (TOUCH) controls.enableRotate = !on;          // one finger picks points; two fingers still move the view
   $('hint').hidden = on; drawMeasures();
 }
 $('vMeasure').onclick = () => setMeasuring(!measuring);
@@ -1529,7 +1640,7 @@ if (!PHONE && THREE.SSAOPass && THREE.SimplexNoise){
 function aoSize(){ if (ao){ const w = renderer.domElement.width, h = renderer.domElement.height; const k = renderer.getPixelRatio() >= 1.5 ? 2 : 1; ao.setSize(Math.max(2, Math.round(w / k)), Math.max(2, Math.round(h / k))); } }
 function drawAO(){
   const u = ao.ssaoMaterial.uniforms, far = camera.position.distanceTo(controls.target);
-  u.aoStrength.value = THREE.MathUtils.clamp((9000 - far) / 5000, 0, 1);
+  u.aoStrength.value = THREE.MathUtils.clamp((9000 - far) / 5000, 0, 1) * aoFade;
   if (u.aoStrength.value < 0.05) return false;
   u.cameraNear.value = camera.near; u.cameraFar.value = camera.far;
   u.cameraProjectionMatrix.value.copy(camera.projectionMatrix); u.cameraInverseProjectionMatrix.value.copy(camera.projectionMatrixInverse);
@@ -1545,7 +1656,8 @@ function drawAO(){
 }
 // Moving (orbit, doors, explode): plain frames, fast. Once it settles: one frame with the ambient occlusion.
 // Nothing changing: nothing drawn (the last picture stays up).
-let frameSig = '', aoDue = false;
+let frameSig = '', aoDue = false, aoMode = 'always', aoFade = 1, lastT = 0;
+const gaps = [];
 for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'input', 'click', 'touchstart', 'touchmove'])
   addEventListener(ev, () => markDirty(250), {passive: true, capture: true});
 function render(t){
@@ -1554,8 +1666,22 @@ function render(t){
   const moving = ex !== exTarget || movers.some(m => m.moved);
   const changed = sig !== frameSig || moving || forceFrame || t < busyUntil;
   frameSig = sig; forceFrame = false;
-  if (changed){ renderer.render(scene, camera); aoDue = !!ao; return; }
-  if (aoDue){ aoDue = false; renderer.render(scene, camera); if (ao) drawAO(); }
+  if (changed){
+    // how fast is this computer while things move? well under 30 frames a second: occlusion only once settled
+    if (lastT && t - lastT < 120){ gaps.push(t - lastT); if (gaps.length > 40) gaps.shift();
+      if (aoMode === 'always' && gaps.length >= 30 && gaps.reduce((a, b) => a + b, 0) / gaps.length > 34){ aoMode = 'settle'; console.log('occlusion: only when still'); } }
+    lastT = t;
+    renderer.render(scene, camera); drawCaps();
+    if (ao && aoMode === 'always'){ aoFade = 1; drawAO(); }
+    else { aoFade = 0; aoDue = !!ao; }
+    drawLoupe();
+    return;
+  }
+  lastT = 0;
+  if (aoDue){                                    // settled: fade the occlusion in over a few frames
+    aoFade = Math.min(1, aoFade + 0.2); aoDue = aoFade < 1; forceFrame = false;
+    renderer.render(scene, camera); drawCaps(); if (ao) drawAO(); drawLoupe();
+  }
 }
 new ResizeObserver(() => { aoSize(); markDirty(); }).observe(stage); aoSize();
 
