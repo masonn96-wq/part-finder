@@ -3,7 +3,7 @@ var ICON = new URL("./icon.svg", window.location.href).href;          // white: 
 var ICON_DARK = new URL("./icon-dark.svg", window.location.href).href; // grey: card-back heading
 var INDEX = new URL("../jobs/index.json", window.location.href);
 // Never depend on load order: a cached index.html may not load keys.js / match.js.
-try { console.log("[PF3D] connector v5", "keys:" + (typeof PFKeys), "match:" + (typeof PFMatch)); } catch (e) {}
+try { console.log("[PF3D] connector v6", "keys:" + (typeof PFKeys), "match:" + (typeof PFMatch)); } catch (e) {}
 
 function fail(t, what, err) {
   return t.alert({ message: what + ": " + ((err && err.message) || err), duration: 12, display: "error" });

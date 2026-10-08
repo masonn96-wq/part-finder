@@ -70,15 +70,29 @@
     return { job: null, candidates: cands, reason: "weak-name" };
   }
 
-  // What a card should show: its pinned job if that still exists, else the match.
+  // Every model this card covers. One card can cover several rooms of a job
+  // ("Bed 1+4 Robes" = Bed 1 Robe + Bed 4 Robe): when same-number jobs tie,
+  // the card gets all of them rather than none.
+  function matchAll(cardName, jobs) {
+    var m = match(cardName, jobs);
+    if (m.job) return [m.job];
+    if (m.reason !== "several-rooms") return [];
+    var r = rank(cardName, jobs).filter(function (x) { return x.numHit; });
+    var best = r.length ? r[0].overlap : 0;
+    return r.filter(function (x) { return x.overlap === best; }).map(function (x) { return x.job; });
+  }
+
+  // What a card should show: its pinned job if that still exists, else the match(es).
   function resolve(cardName, jobs, pinned) {
     var m = match(cardName, jobs);
     var pin = pinned ? (jobs || []).filter(function (j) { return j.key === pinned; })[0] : null;
+    var all = pin ? [pin] : matchAll(cardName, jobs);
     return {
-      job: pin || m.job,
+      jobs: all,
+      job: all[0] || null,
       pinned: !!pin,
       pinMissing: !!pinned && !pin,
-      reason: pin ? "pinned" : m.reason,
+      reason: pin ? "pinned" : (all.length > 1 ? "rooms" : m.reason),
       candidates: m.candidates,
     };
   }
@@ -91,21 +105,25 @@
     return "**[" + label + "](" + viewerBase + "?j=" + encodeURIComponent(job.key) + ")**";
   }
   // New description, the same string if nothing needs to change, or null if
-  // the result would not fit in a Trello description.
-  function withLink(desc, job, viewerBase) {
+  // the result would not fit in a Trello description. Our link lines (one per
+  // job) replace whatever link lines were there, in the same place.
+  function withLinks(desc, jobs, viewerBase) {
     desc = desc || "";
-    var line = linkLine(job, viewerBase);
+    var block = jobs.map(function (j) { return linkLine(j, viewerBase); });
     var marker = "](" + viewerBase + "?j=";
-    var lines = desc.split("\n");
-    var i = -1;
-    for (var k = 0; k < lines.length; k++) if (lines[k].indexOf(marker) !== -1) { i = k; break; }
+    var lines = desc.split("\n"), kept = [], at = -1;
+    for (var k = 0; k < lines.length; k++) {
+      if (lines[k].indexOf(marker) !== -1) { if (at < 0) at = kept.length; }
+      else kept.push(lines[k]);
+    }
     var out;
-    if (i >= 0) { lines[i] = line; out = lines.join("\n"); }
-    else out = desc.trim() ? line + "\n\n" + desc : line;
+    if (at >= 0) { kept.splice.apply(kept, [at, 0].concat(block)); out = kept.join("\n"); }
+    else out = desc.trim() ? block.join("\n") + "\n\n" + desc : block.join("\n");
     return out.length > DESC_MAX ? null : out;
   }
+  function withLink(desc, job, viewerBase) { return withLinks(desc, [job], viewerBase); }
 
-  var api = { roomWords: roomWords, match: match, resolve: resolve, withLink: withLink, linkLine: linkLine, rank: rank, jobNumber: jobNumber, words: words };
+  var api = { roomWords: roomWords, match: match, matchAll: matchAll, resolve: resolve, withLink: withLink, withLinks: withLinks, linkLine: linkLine, rank: rank, jobNumber: jobNumber, words: words };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.PFMatch = api;
 })(this);

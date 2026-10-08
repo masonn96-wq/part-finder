@@ -21,6 +21,8 @@
   #allow { background: #0c66e4; border-color: #0c66e4; color: #fff; }
   #allow:hover { background: #0055cc; }
   .spacer { flex: 1; }
+  #rooms { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+  #rooms button[aria-pressed="true"] { background: #172b4d; border-color: #172b4d; color: #fff; }
   button { font: inherit; height: 32px; border-radius: 4px; border: 1px solid var(--line); background: var(--bg);
     color: var(--ink); padding: 0 12px; cursor: pointer; white-space: nowrap; }
   button:hover { background: #ebecf0; }
@@ -34,6 +36,7 @@
 <div class="bar">
   <span id="job">Loading…</span>
   <span id="note"></span>
+  <span id="rooms"></span>
   <span class="spacer"></span>
   <span id="link"></span>
   <button id="allow" type="button" hidden>Add phone link</button>
@@ -46,7 +49,7 @@
 // Board id comes in the query string so the key is known before the client is created.
 var APP_KEY = (typeof PFKeys !== "undefined") ? PFKeys.appKeyFor(new URLSearchParams(location.search).get("b") || "")
   : "704e82fa29aaf32f15335d5d929c6b9b";
-try { console.log("[PF3D] panel v4", "keys:" + (typeof PFKeys), "match:" + (typeof PFMatch)); } catch (e) {}
+try { console.log("[PF3D] panel v6", "keys:" + (typeof PFKeys), "match:" + (typeof PFMatch)); } catch (e) {}
 var t = TrelloPowerUp.iframe({ appKey: APP_KEY, appName: "Part Finder 3D" });
 var API = "https://api.trello.com/1";
 var ctx = {}; try { ctx = t.getContext() || {}; } catch (e) {}
@@ -55,7 +58,7 @@ var cardName = t.arg("cardName") || "";
 var VIEWER = new URL("../", location.href);
 var INDEX = new URL("../jobs/index.json", location.href);
 var $ = function (id) { return document.getElementById(id); };
-var jobs = null, shownKey = null, pinned = "", linkedFor = null, linking = false;
+var jobs = null, shownKey = null, pinned = "", linkedFor = null, linking = false, roomJobs = [];
 
 function note(text, warn) { $("note").textContent = text || ""; $("note").className = warn ? "warn" : ""; }
 function linkNote(text, warn) { $("link").textContent = text || ""; $("link").className = warn ? "warn" : ""; }
@@ -64,8 +67,9 @@ function rest() { return Promise.resolve(t.getRestApi()); }
 // Keep one tappable link in the card description so the phone app can open the
 // viewer (phone apps don't show this panel). Re-reads the description right
 // before writing and only touches its own line.
-function syncLink(job) {
-  if (!cardId || linking || linkedFor === job.key) return Promise.resolve();
+function syncLink(list) {
+  var want = list.map(function (j) { return j.key; }).join("|");
+  if (!cardId || linking || linkedFor === want) return Promise.resolve();
   linking = true;
   var api;
   return rest().then(function (a) { api = a; return api.isAuthorized(); })
@@ -77,14 +81,14 @@ function syncLink(job) {
         return fetch(API + "/cards/" + cardId + "?fields=desc&" + q)
           .then(function (r) { return r.ok ? r.json() : r.text().then(function (b) { throw restError(r.status, b); }); })
           .then(function (c) {
-            var next = PFMatch.withLink(c.desc || "", job, VIEWER.href);
+            var next = PFMatch.withLinks(c.desc || "", list, VIEWER.href);
             if (next === null) throw new Error("description is full");
-            if (next === (c.desc || "")) { linkedFor = job.key; linkNote("Phone link ✓"); return; }
+            if (next === (c.desc || "")) { linkedFor = want; linkNote(list.length > 1 ? "Phone links ✓" : "Phone link ✓"); return; }
             return fetch(API + "/cards/" + cardId + "?" + q, {
               method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ desc: next }),
             }).then(function (r) {
               if (!r.ok) return r.text().then(function (b) { throw restError(r.status, b); });
-              linkedFor = job.key; linkNote("Phone link added ✓");
+              linkedFor = want; linkNote(list.length > 1 ? "Phone links added ✓" : "Phone link added ✓");
             });
           });
       });
@@ -107,6 +111,23 @@ $("allow").addEventListener("click", function () {
     .then(function () { linkedFor = null; return refresh(); })
     .catch(function (e) { linkNote("Not allowed: " + ((e && e.message) || e), true); });
 });
+
+// One button per model when a card covers several rooms of a job.
+function drawRooms(list) {
+  roomJobs = list;
+  var box = $("rooms"); box.innerHTML = "";
+  if (list.length < 2) return;
+  list.forEach(function (j) {
+    var b = document.createElement("button"); b.type = "button";
+    b.textContent = j.room || j.name; b.dataset.key = j.key;
+    b.setAttribute("aria-pressed", String(j.key === shownKey));
+    b.addEventListener("click", function () { show(j); markRoom(); });
+    box.appendChild(b);
+  });
+}
+function markRoom() {
+  [].forEach.call($("rooms").children, function (b) { b.setAttribute("aria-pressed", String(b.dataset.key === shownKey)); });
+}
 
 function message(html) { shownKey = null; $("stage").innerHTML = '<div class="msg">' + html + "</div>"; }
 
@@ -137,9 +158,12 @@ function refresh() {
       pinned = r[1] || "";
       var res = PFMatch.resolve(cardName, r[0], pinned);
       if (res.pinMissing) note("Saved job no longer in jobs/ — using the name match.", true);
-      else note(res.reason === "pinned" ? "Chosen for this card" : res.reason === "number" ? "Matched by job number" : res.job ? "Matched by name" : "");
-      if (res.job) { show(res.job); syncLink(res.job); }
-      else { $("job").textContent = cardName || "This card";
+      else note(res.reason === "pinned" ? "Chosen for this card" : res.reason === "rooms" ? res.jobs.length + " rooms" : res.reason === "number" ? "Matched by job number" : res.job ? "Matched by name" : "");
+      if (res.job) {
+        var keep = res.jobs.filter(function (j) { return j.key === shownKey; })[0];   // stay on the room being looked at
+        show(keep || res.job); drawRooms(res.jobs); markRoom(); syncLink(res.jobs);
+      }
+      else { $("job").textContent = cardName || "This card"; drawRooms([]);
         message("<b>No job for this card.</b><br>Use <b>Change job</b> to pick one."); }
     })
     .catch(function (e) {
