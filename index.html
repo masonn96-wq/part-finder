@@ -150,7 +150,7 @@ body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:1
     <div class="mtotal" id="mTotal" aria-live="polite">– <small>mm</small></div>
     <div class="maxes" id="mAxes"></div>
     <div class="msnap" id="mSnap"></div>
-    <div class="mrow"><label><input type="checkbox" id="mStraight"> Keep it straight (X / Y / Z)</label><button type="button" id="mUndo">Undo</button><button type="button" id="mClear">Clear all</button></div>
+    <div class="mrow"><label><input type="checkbox" id="mStraight" checked> Straight (level / plumb)</label><button type="button" id="mUndo">Undo</button><button type="button" id="mClear">Clear all</button></div>
     <ol class="mlist" id="mList" hidden></ol>
   </section>
   <section class="spanel" id="spanel" hidden aria-label="Section">
@@ -393,6 +393,9 @@ const ENV_LEVEL = 0.4;
 // section cuts: three planes (height, left-right, front-back) shared by every model material; off = pushed far away
 const CLIP = [new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e7), new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e7), new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e7)];
 renderer.localClippingEnabled = true;
+// redraw only when something changed (camera, doors, a finish, a texture arriving...): an idle view costs nothing
+let forceFrame = true, busyUntil = 0;
+const markDirty = ms => { forceFrame = true; if (ms) busyUntil = Math.max(busyUntil, performance.now() + ms); };
 const clipped = p => CLIP.some(pl => pl.distanceToPoint(p) < -0.01);
 // ---- materials (v2 files carry real CV materials + textures; v1 files get plain board colour) ----
 const loader = new THREE.TextureLoader();
@@ -420,7 +423,7 @@ function texture(file){
           const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
           c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); t.image = c; t.needsUpdate = true;
         }
-        (texVariants[file] || []).forEach(v => { v.image = t.image; v.needsUpdate = true; }); texUsers[file].forEach(m => { m.needsUpdate = true; }); },
+        (texVariants[file] || []).forEach(v => { v.image = t.image; v.needsUpdate = true; }); texUsers[file].forEach(m => { m.needsUpdate = true; }); markDirty(); },
       undefined,
       () => texUsers[file].forEach(m => { m.map = null; m.color.copy(m.userData.fallback); m.userData.base.copy(m.userData.fallback); m.needsUpdate = true; }));
     t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = Math.min(PHONE ? 4 : 8, renderer.capabilities.getMaxAnisotropy());
@@ -555,6 +558,7 @@ function wallStep(){
     w.fade += (want - w.fade) * (still ? 1 : 0.2);
     if (Math.abs(w.fade - want) < 0.005) w.fade = want;
     for (const m of w.meshes){ m.material.opacity = w.fade; m.material.depthWrite = w.fade > .9; m.renderOrder = w.fade > .9 ? 0 : 3; }
+    forceFrame = true;
   }
 }
 const byId = new Map(parts.filter(x => x.p.id).map(x => [String(x.p.id), x]));
@@ -702,7 +706,7 @@ function setLook(x, opacity, edgeColor, edgeOpacity, tint){
   for (const e of x.edges){ e.material.color.copy(edgeColor); e.material.opacity = edgeOpacity; e.material.visible = edgeOpacity > 0; }
 }
 function paint(){
-  shadowDirty = true;
+  shadowDirty = true; forceFrame = true;
   const c = n => new THREE.Color(css(n));
   scene.background = c('--stage');
   const hi = c('--hi'), edge = c('--edge'), ghost = c('--ghost');
@@ -1363,7 +1367,7 @@ const measures = [], mGroup = new THREE.Group(); mGroup.renderOrder = 25; scene.
 const TOUCH = matchMedia('(pointer: coarse)').matches;
 const SNAP_PX = TOUCH ? {v: 26, mid: 20, edge: 18} : {v: 14, mid: 11, edge: 9};
 const SNAP_NAMES = {v: 'Corner', mid: 'Middle of edge', edge: 'Edge', face: 'Surface'};
-const mm = v => (Math.round(v * 100) / 100).toFixed(2);
+const mm = v => String(Math.round(v));          // whole mm (the model is exact to 0.01 mm; the reading rounds)
 function markerSprite(kind, strong){
   const c = document.createElement('canvas'); c.width = c.height = 48; const g = c.getContext('2d');
   g.lineWidth = 5; g.strokeStyle = '#ffffff'; g.fillStyle = strong ? css('--hi') : css('--fg');
@@ -1424,7 +1428,7 @@ function straighten(a, b){                       // keep only the biggest of the
   const d = b.clone().sub(a), ax = Math.abs(d.x) >= Math.abs(d.y) && Math.abs(d.x) >= Math.abs(d.z) ? 'x' : Math.abs(d.y) >= Math.abs(d.z) ? 'y' : 'z';
   const out = a.clone(); out[ax] = b[ax]; return out;
 }
-function straightOn(e){ return $('mStraight').checked || (e && e.shiftKey); }
+function straightOn(e){ return $('mStraight').checked !== !!(e && e.shiftKey); }   // Shift: the other way for one point
 function showReading(a, b, tail){
   const d = b.clone().sub(a);
   $('mTotal').innerHTML = mm(d.length()) + ' <small>mm</small>';
@@ -1451,6 +1455,7 @@ function drawMeasures(){
 }
 function hideHover(){ for (const k in hoverMark) hoverMark[k].visible = false; rubber.visible = false; }
 function measureHover(e){
+  markDirty();
   const s = snapAt(e.clientX, e.clientY); mHover = s; hideHover();
   if (!s){ $('mSnap').textContent = mFirst ? 'Pick the second point on the model' : 'Point at the model'; return; }
   const m = hoverMark[s.kind]; m.position.copy(s.p); m.visible = true;
@@ -1482,7 +1487,7 @@ function setMeasuring(on){
   measuring = on; $('vMeasure').setAttribute('aria-pressed', on); $('mpanel').hidden = !on;
   if (on){ if (commenting) setCommenting(false); openSheet(false); openSection(false); if (picking) setPicking(false); $('card').hidden = true; $('tip').hidden = true;
     $('mSnap').textContent = TOUCH ? 'Tap two points · it snaps to corners, edge middles and edges · zoom in for small parts'
-      : 'Click two points · snaps to corners, edge middles and edges · Shift keeps it straight · zoom in for small parts'; }
+      : 'Click two points · snaps to corners, edge middles and edges · Shift for a free (angled) line · zoom in for small parts'; }
   else { mFirst = null; hideHover(); hintText(); updateCard(); }
   $('hint').hidden = on; drawMeasures();
 }
@@ -1538,20 +1543,26 @@ function drawAO(){
   ao.renderPass(renderer, ao.copyMaterial, null);
   return true;
 }
-let lastFrame = 0;
+// Moving (orbit, doors, explode): plain frames, fast. Once it settles: one frame with the ambient occlusion.
+// Nothing changing: nothing drawn (the last picture stays up).
+let frameSig = '', aoDue = false;
+for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'input', 'click', 'touchstart', 'touchmove'])
+  addEventListener(ev, () => markDirty(250), {passive: true, capture: true});
 function render(t){
-  renderer.render(scene, camera);
-  if (!ao) return;
-  if (!drawAO()){ lastFrame = 0; return; }
-  // too slow (well under 25 frames a second for 2 s): drop the occlusion
-  if (lastFrame){ aoSlow = t - lastFrame > 45 ? aoSlow + 1 : Math.max(0, aoSlow - 2); if (aoSlow > 50){ ao = null; console.log('ambient occlusion off: too slow here'); } }
-  lastFrame = t;
+  const e = camera.matrixWorld.elements, pm = camera.projectionMatrix.elements;
+  const sig = e.join(',') + '|' + pm[0] + ',' + pm[5] + '|' + renderer.domElement.width + 'x' + renderer.domElement.height;
+  const moving = ex !== exTarget || movers.some(m => m.moved);
+  const changed = sig !== frameSig || moving || forceFrame || t < busyUntil;
+  frameSig = sig; forceFrame = false;
+  if (changed){ renderer.render(scene, camera); aoDue = !!ao; return; }
+  if (aoDue){ aoDue = false; renderer.render(scene, camera); if (ao) drawAO(); }
 }
-new ResizeObserver(aoSize).observe(stage); aoSize();
+new ResizeObserver(() => { aoSize(); markDirty(); }).observe(stage); aoSize();
 
 resize(); hintText(); fromHash();
 (function loop(t){
   if (sel) for (const m of sel.meshes) m.material.emissiveIntensity = still ? .35 : .2 + .25 * (1 + Math.sin((t || 0) / 300)) / 2;
+  if (sel && !still) forceFrame = true;           // the scanned part's pulse keeps drawing
   moveStep(); controls.update(); wallStep();
   if (shadowDirty || ex !== exTarget || movers.some(m => m.moved)){ renderer.shadowMap.needsUpdate = true; shadowDirty = false; }
   render(t || 0); requestAnimationFrame(loop);
